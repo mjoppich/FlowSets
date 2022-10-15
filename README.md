@@ -91,4 +91,4 @@ The combined dataframe is then ready for usage in the FlowSet framework. [The ex
 [Markus Joppich](https://ibio.dev/)
 [GitHub followers](https://img.shields.io/github/followers/mjoppich?style=social)
 
-<a href="https://twitter.com/intent/follow?screen_name=shields_io"><img src="https://img.shields.io/twitter/follow/mjoppich?style=social&logo=twitter"alt="follow on Twitter"></a>
+[![Twitter Follow](https://img.shields.io/twitter/follow/mjoppich?style=social&logo=twitter)](https://twitter.com/intent/follow?screen_name=mjoppich)
