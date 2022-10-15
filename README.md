@@ -1,9 +1,10 @@
-# FlowSets
+# FlowSet
 
+### FlowSet: an integrative approach to analyse discrete-series data using fuzzy concepts
 
+---
 
-Development by
-
+Check-out the expression example [here](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_expression_data.all.ipynb) or the double-differential analysis [here](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb).
 
 ## Examples
 
@@ -86,4 +87,5 @@ The combined dataframe is then ready for usage in the FlowSet framework. [The ex
 ## Contact
 
 [Felix Offensperger](https://github.com/offenspergerfelix)
+
 [Markus Joppich](https://github.com/mjoppich)
