@@ -4,7 +4,7 @@ import os, sys
 import numpy as np
 import pandas as pd
 import skfuzzy as fuzz
-from skfuzzy import control as ctrl
+from skfuzzy.control.fuzzyvariable import FuzzyVariable
 from statsmodels.stats.multitest import multipletests
 
 from natsort import natsorted
@@ -110,7 +110,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, transformCounts = lambda x: x):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x):
 
         nodePositions = {}
 
@@ -119,8 +119,11 @@ class SankeyPlotter:
 
                 nodePositions[ (nodeName, nodeLevel) ] = (seriesOrder.index(nodeName), 2*nli)
 
-        minNodeLevel = min([nodePositions[x][1] for x in nodePositions])
-        maxNodeLevel = max([nodePositions[x][1] for x in nodePositions])
+        minYValue = min([nodePositions[x][1] for x in nodePositions])
+        maxYValue = max([nodePositions[x][1] for x in nodePositions])
+
+        minXValue = min([nodePositions[x][0] for x in nodePositions])
+        maxXValue = max([nodePositions[x][0] for x in nodePositions])
 
         #nodeWeigthSequence = [ (("WT", 2), ("KO", 0), 1), (("WT", 2), ("KO", -2), 1), (("WT", -1), ("KO", -2), 1) ]
         nodeOffsets = defaultdict(lambda: 0)
@@ -139,7 +142,12 @@ class SankeyPlotter:
 
         maxFlowInAllNodes = max([x for x in maxFlowPerNode.values()])
 
-        fig, ax = plt.subplots(figsize=(20,10))
+        plt.close()
+        if fsize is None:
+            fsize = (4 * len(seriesOrder), 2*(len(levelOrder)+1))
+
+        print("Figure Size", fsize)
+        fig, ax = plt.subplots(figsize=fsize)
         ax.axis('off')
         plt.title("")
 
@@ -182,7 +190,7 @@ class SankeyPlotter:
 
 
 
-        props = dict(boxstyle='round', facecolor='grey', alpha=1.0, pad=1)
+        props = dict(boxstyle='round', facecolor='lightgrey', alpha=1.0, pad=1)
 
         for npi, nn in enumerate(nodePositions):
 
@@ -196,14 +204,18 @@ class SankeyPlotter:
 
         for si, series in enumerate(series2name):
 
-            ax.text(si, minNodeLevel-1, series2name[series], transform=ax.transData, fontsize=14,rotation=0,
+            ax.text(si, minYValue-1, series2name[series], transform=ax.transData, fontsize=14,rotation=0,
                 verticalalignment='center', ha='center', va='center', bbox=props)
 
 
-        plt.ylim((minNodeLevel-1.5, maxNodeLevel+0.5))
+        #plt.ylim((minNodeLevel-1.5, maxNodeLevel+0.5))
+        #plt.subplots_adjust(left=0.4, right=0.6, bottom=0.4, top=0.6)
+        #plt.tight_layout()
+        plt.xlim(minXValue-1, maxXValue+1)
+        plt.ylim(minYValue-2, maxYValue+2)
 
-        plt.tight_layout()
         plt.show()
+        plt.close()
 
 def to_fuzzy(value, fzy):
     return np.array(
@@ -265,7 +277,7 @@ def identify_threshold_level(dfWideNew, force_calculation = False):
     explDF = dfWideNew.copy()
     explDF.reset_index(drop=True, inplace=True)
 
-    for thresholdIteration in range(0,11, 1):
+    for thresholdIteration in range(0, 11, 1):
         currentThreshold = thresholdIteration * 0.05
 
         explDF = dfWideNew.copy()
@@ -319,7 +331,7 @@ def identify_threshold_level(dfWideNew, force_calculation = False):
 
 
 
-class CustomFuzzyVar(ctrl.Antecedent):
+class CustomFuzzyVar(FuzzyVariable):
 
     def __init__(self, universe, label):
         super().__init__(universe, label)
@@ -327,7 +339,7 @@ class CustomFuzzyVar(ctrl.Antecedent):
 
     def automf(self, number=5, names=None, centers=None, shape="tri"):
 
-        assert(shape in ("tri", "sig"))
+        assert(shape in ("tri", "gauss"))
         assert(len(names) == number)
 
         if not centers is None:
@@ -357,21 +369,42 @@ class CustomFuzzyVar(ctrl.Antecedent):
                     avgWidth = rightWidth
 
                 widths.append(2*avgWidth)
+
+            widths.append(2*(centers[-1]-centers[-2]))
             
 
         abcs = [[c - w / 2, c, c + w / 2] for c, w in zip(centers, widths)]
-        cws = [[c, w] for c, w in zip(centers, widths)]
+        cws = [[c, w/2] for c, w in zip(centers, widths)]  
 
         # Clear existing adjectives, if any
         self.terms = OrderedDict()
 
-        # Repopulate
-        for name, abc in zip(names, abcs):
+        unscaledValues = np.array([0.0]*len(self.universe))
+        for name, abc, center_width in zip(names, abcs, cws):
 
             if shape == "tri":
-                self[name] = fuzz.trimf(self.universe, abc)
-            elif shape == "sig":
-                self[name] = fuzz.sigmf(self.universe, cws[0], cws[1])
+                unscaledValues += fuzz.trimf(self.universe, abc)
+            elif shape == "gauss":
+                print(center_width)
+                unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
+
+        # Repopulate
+        for name, abc, center_width in zip(names, abcs, cws):
+
+            if shape == "tri":
+                self[name] = fuzz.trimf(self.universe, abc)/unscaledValues
+            elif shape == "gauss":
+                self[name] = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
+
+
+        unscaledValues = np.array([0.0]*len(self.universe))
+
+        for name in self.terms:
+            print(self.terms[name])
+            unscaledValues += self.terms[name].mf
+
+        assert(abs(sum(unscaledValues)-len(self.universe)) < 1)
+
 
 
 def to_arg_max(df, exprMFs):
@@ -402,7 +435,7 @@ def to_arg_max(df, exprMFs):
 class FlowAnalysis:
 
     @classmethod
-    def make_fuzzy_concepts(cls, exprData, mfLevels, centers, meancolName, mfLevelsMirrored):
+    def make_fuzzy_concepts(cls, exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=None, shape="tri"):
 
 
         if "max.cluster" in exprData.columns:
@@ -421,21 +454,23 @@ class FlowAnalysis:
 
         print("Creating Range", minValue, "->", maxValue)
 
-        stepSize = min(0.1, (maxValue-minValue)/100)
+        if stepsize is None:
+            stepsize = min(0.1, (maxValue-minValue)/200)
+            print("Fuzzy Step Size", stepsize)
 
-        exprMFs = CustomFuzzyVar(np.arange(minValue, maxValue, stepSize), 'exprMFs')
-        exprMFs.automf(len(mfLevels), names=mfLevels, centers=centers) 
+        exprMFs = CustomFuzzyVar(np.arange(minValue, maxValue, stepsize), 'exprMFs')
+        exprMFs.automf(len(mfLevels), names=mfLevels, centers=centers, shape=shape) 
         # You can see how these look with .view()
         exprMFs.view()
 
         return exprMFs
 
     @classmethod
-    def exprDF2LongDF(cls, indf, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster"):
+    def exprDF2LongDF(cls, indf, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
 
         exprData = indf.copy()
 
-        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, meancolName, mfLevelsMirrored)
+        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape)
 
         meanExprCol = list(exprData.columns).index(meancolName)
         exprCountCol = list(exprData.columns).index(exprcolName)
@@ -521,16 +556,16 @@ class FlowAnalysis:
         return flowgroup_flow, flowgroup_route, flowgroup_genes
 
 
-    def plot_flows(self, use_flows = None):
+    def plot_flows(self, use_flows = None, figsize=None):
 
         if use_flows is None:
             use_flows = [x for x in self.flowgroup_route]
 
-        weightSequence = self._to_weight_sequence( self.flowgroup_route, self.flowgroup_flow)
+        weightSequence = self._to_weight_sequence( self.flowgroup_route, self.flowgroup_flow, use_flows=use_flows)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x))
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
-    def plot_genes(self, genes):
+    def plot_genes(self, genes, figsize=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -544,16 +579,20 @@ class FlowAnalysis:
 
         weightSequence = self._to_weight_sequence( flowgroup_route, flowgroup_flow)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x))
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
-    def _to_weight_sequence(self, flowgroup_route, flowgroup_flow):
+    def _to_weight_sequence(self, flowgroup_route, flowgroup_flow, use_flows=None):
+
+        if use_flows is None:
+            use_flows = [x for x in flowgroup_route]
+
         weightSequence = []
-        for fgid in [x for x in flowgroup_route]:
+        for fgid in [x for x in use_flows]:
             weightSequence.append( (fgid, tuple(flowgroup_route[fgid] + [flowgroup_flow.get(fgid, 0)])) )
 
         return weightSequence
 
-    def highlight_genes(self, genes):
+    def highlight_genes(self, genes, figsize=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -575,11 +614,21 @@ class FlowAnalysis:
 
         specialColors = {x: "red" for x in set(subsetFlowsFG['id.flow'])}
 
-        SankeyPlotter._make_plot(weightSequenceBG+weightSequenceFG, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x))
+        SankeyPlotter._make_plot(weightSequenceBG+weightSequenceFG, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
-    def flow_finder( self, sequence, verbose=True ):
+    def flow_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
 
         seriesOrder = list(self.exprMF.terms.keys())
+
+        if not minLevels is None:
+            for x in minLevels:
+                if not x is None:
+                    assert(x in seriesOrder)
+        if not maxLevels is None:
+            for x in maxLevels:
+                if not x is None:
+                    assert(x in seriesOrder)
+
 
         matchingFIDs = set()
 
@@ -595,8 +644,22 @@ class FlowAnalysis:
                 startIdx = seriesOrder.index(fgroup[ci])
                 endIdx = seriesOrder.index(fgroup[ci+1])
 
+                if not minLevels is None:
+                    if (not minLevels[ci] is None and startIdx < seriesOrder.index(minLevels[ci])) or (not minLevels[ci+1] is None and endIdx < seriesOrder.index(minLevels[ci+1])):
+                        acceptFlow=False
+                        break
+
+                if not maxLevels is None:
+                    if (not maxLevels[ci] is None and startIdx > seriesOrder.index(maxLevels[ci])) or (not maxLevels[ci+1] is None and endIdx > seriesOrder.index(maxLevels[ci+1])):
+                        acceptFlow=False
+                        break
+
                 if comp == "<":
                     if not startIdx < endIdx:
+                        acceptFlow=False
+                        break
+                if comp == "<<":
+                    if not startIdx+1 < endIdx:
                         acceptFlow=False
                         break
                 elif comp == "<=":
@@ -611,6 +674,10 @@ class FlowAnalysis:
                     if not startIdx > endIdx:
                         acceptFlow=False
                         break
+                elif comp == ">>":
+                    if not startIdx > endIdx+1:
+                        acceptFlow=False
+                        break
                 elif comp == "=":
                     if not startIdx == endIdx:
                         acceptFlow=False
@@ -621,7 +688,7 @@ class FlowAnalysis:
 
             if acceptFlow:
                 if verbose:
-                    print(fgroup)
+                    print(fid, fgroup)
                 matchingFIDs.add(fid)
 
         return matchingFIDs
@@ -644,20 +711,30 @@ class FlowAnalysis:
 
         return geneset2genes
 
-    def analyse_pathways(self):
+    def analyse_pathways(self, pathways_gmt="ReactomePathways.gmt", additional_pathways=None, use_flows=None):
 
 
-        rp = self.read_gmt_file("ReactomePathways.gmt")
+        rp = self.read_gmt_file(pathways_gmt)
+        
+        if not additional_pathways is None:
+            for pname, pgenes in additional_pathways:
+                rp[pname] = (pname, pgenes)
+
         allDFs = []
 
         bar = makeProgressBar()
 
-        for fgid in bar(self.flowgroup_genes):
+        if use_flows is None:
+            use_flows = [x for x in self.flowgroup_route]
+
+        bg_df = self.flows[self.flows["id.flow"].isin(use_flows)]
+
+        for fgid in bar(use_flows):
             #print(fgid)
 
             fg_df = self.flows[self.flows["id.flow"] == fgid]
 
-            df = self.analyse_genes_for_genesets(rp, fg_df)
+            df = self.analyse_genes_for_genesets(rp, fg_df, bg_df.copy())
             df["fgid"] = fgid
 
             #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
@@ -671,7 +748,28 @@ class FlowAnalysis:
 
         return allFGDFs
 
-    def analyse_genes_for_genesets(self, pathways, flowDF, populationSize=None):
+    def analyse_pathways_gropuped(self, use_flows, pathways_gmt="ReactomePathways.gmt", additional_pathways=None):
+
+
+        rp = self.read_gmt_file(pathways_gmt)
+        
+        if not additional_pathways is None:
+            for pname, pgenes in additional_pathways:
+                rp[pname] = (pname, pgenes)
+
+
+        bg_df = self.flows[~self.flows["id.flow"].isin(use_flows)]
+
+        fg_df = self.flows[self.flows["id.flow"].isin(use_flows)]
+        fg_df[[self.symbol_column, "mf.flow"]].groupby(self.symbol_column).aggregate("sum")
+        allFGDFs = self.analyse_genes_for_genesets(rp, fg_df, bg_df.copy())
+
+        _ , elemAdjPvals, _, _ = multipletests(allFGDFs["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
+        allFGDFs["adj_pval"] = elemAdjPvals
+
+        return allFGDFs
+
+    def analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, populationSize=None):
         """
         
         pathways: pathway object
@@ -690,13 +788,13 @@ class FlowAnalysis:
             for gene in pwGenes:
                 allPathwayGenes.add(gene)
 
-        allPathwayGenes = allPathwayGenes.intersection(self.flows[self.symbol_column])
+        allPathwayGenes = allPathwayGenes.intersection(bgFlowDF[self.symbol_column])
 
-        pwGeneFlow = self.flows[self.flows[self.symbol_column].isin(allPathwayGenes)]
+        pwGeneFlow = bgFlowDF[bgFlowDF[self.symbol_column].isin(allPathwayGenes)]
         totalFlowSumOfPathwayGenes = pwGeneFlow["mf.flow"].sum()
 
         if populationSize is None:
-            populationSize = len(set(self.flows[self.symbol_column]))
+            populationSize = len(set(bgFlowDF[self.symbol_column]))
 
         flowGenes = set(flowDF[self.symbol_column])
         flowScore = flowDF["mf.flow"].sum()
@@ -717,6 +815,9 @@ class FlowAnalysis:
                 chi2 = 0
                 pval = 1.0
             else:
+
+                #inflow inflow_inset
+                #not-inflow not-inflow_inset
 
                 table=np.array([[flowScore,flowInPathwayScore], #len(inflow_inset)
                                 [populationSize-flowScore,len(pwGenes)-flowInPathwayScore]
@@ -745,3 +846,98 @@ class FlowAnalysis:
             outData["mean_coverage"].append(pathway_coverage*genes_coverage)
 
         return pd.DataFrame.from_dict(outData)
+
+
+    def custom_div_cmap(self, numcolors=11, name='custom_div_cmap',
+                        mincol='blue', midcol='white', maxcol='red'):
+        """ Create a custom diverging colormap with three colors
+        
+        Default is blue to white to red with 11 colors.  Colors can be specified
+        in any way understandable by matplotlib.colors.ColorConverter.to_rgb()
+        """
+
+        from matplotlib.colors import LinearSegmentedColormap 
+        
+        cmap = LinearSegmentedColormap.from_list(name=name, 
+                                                colors = [x for x in [mincol, midcol, maxcol] if not x is None],
+                                                N=numcolors)
+        return cmap
+
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10)):
+        #https://www.programmersought.com/article/8628812000/
+        
+        def makeTitle(colDescr, colID, colSize, setSize):
+            out = []
+            for x,y,z, s in zip(colDescr, colID, colSize, setSize):
+                out.append("{} ({}, pw_cov={:.3f}/{})".format(x, y, z, s))
+
+            return out
+
+
+        df_raw = dfin.copy()
+
+        # Prepare Data
+        #determine plot type
+
+        termIDColumn = "pwid"
+        termNameColumn = "pwname"
+        qvalueColumn = "adj_pval"
+        df = df_raw.copy()
+
+        print(df_raw.columns)
+        print("GeneRatio" in df_raw.columns)
+        print("BgRatio" in df_raw.columns)
+
+        rvb = None
+
+        color1 = "#883656"
+        color2 = "#4d6841"
+        color3 = "#afafaf"
+
+        if "pw_coverage" in df_raw.columns and "genes_coverage" in df_raw.columns:
+            #ORA
+            rvb = self.custom_div_cmap(150, mincol=color2, maxcol=color3, midcol=None)
+            colorValues = [rvb(x/df.pwsize.max()) for x in df.pwsize]
+
+        else:
+            raise ValueError()
+
+        df['termtitle'] = makeTitle(df_raw[termNameColumn], df_raw[termIDColumn], df["flow_pw_score"],df["pwsize"])
+
+
+        #df.sort_values('adj_pval', inplace=True, ascending=True)
+        df.reset_index()
+        df = df[:numResults]
+        colorValues = colorValues[:numResults]
+        
+        df = df.iloc[::-1]
+        colorValues = colorValues[::-1]
+
+        print(df.shape)
+
+        if df.shape[0] == 0:
+            return
+        
+        maxNLog = max(-np.log(df.adj_pval))
+        maxLine = ((maxNLog// 10)+1)*10       
+        
+        # Draw plot
+        fig, ax = plt.subplots(figsize=figsize, dpi= 80)
+        ax.hlines(y=df.termtitle, xmin=0, xmax=maxLine, color='gray', alpha=0.7, linewidth=1, linestyles='dashdot')
+        ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
+        
+        sizeFactor = 10    
+        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwsize*sizeFactor, c=colorValues, alpha=0.7, )
+
+        handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
+        labels = [x for x in labels]
+
+        # Title, Label, Ticks and Ylim
+        ax.set_title(title, fontdict={'size':12})
+        ax.set_xlabel('Neg. Log. Adj. p-Value')
+        ax.set_yticks(df.termtitle)
+        ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
+        plt.grid(b=None)
+        plt.tight_layout()
+        plt.yticks(fontsize=16)
+        plt.show()
