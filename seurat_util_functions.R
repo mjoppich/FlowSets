@@ -506,3 +506,18 @@ compareClusters = function(scdata, cellsID1, cellsID2, suffix1, suffix2, prefix=
   return(joinedData)
 }
 
+makeCombinedDF = function(ldf, outfolder)
+{
+  
+  for (x in names(ldf))
+  {
+    ldf[[x]]$cluster = paste("cluster.tp", x, sep="0")
+    
+    print(colnames(ldf[[x]]))
+  }
+  
+  rdf = do.call("rbind", ldf)
+  
+  write.table(rdf, paste(outfolder, "combined_de_result.tsv", sep="/"), quote=F, sep="\t", row.names=F )
+  
+}
