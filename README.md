@@ -4,6 +4,8 @@
 
 ---
 
+<img src="https://github.com/mjoppich/FlowSets/blob/main/examples/ddiff_flows.png" width="500px" />
+
 Check-out the expression example [here](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_expression_data.all.ipynb) or the double-differential analysis [here](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb).
 
 ## Examples
