@@ -35,7 +35,7 @@ The data frame can then be read in python and used for analysis. [The example an
 
 ### Differential data
 
-Similar to the expression data case, we first need to prepare the differential expression data for each **TimePoint**:
+Similar to the expression data case, we first need to prepare the differential expression data for each **TimePoint**
 
     
     celltype = "Monocytes-Immune-system"
