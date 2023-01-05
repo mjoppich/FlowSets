@@ -8,15 +8,17 @@ from skfuzzy.control.fuzzyvariable import FuzzyVariable
 from statsmodels.stats.multitest import multipletests
 
 from natsort import natsorted
-from scipy.stats import hypergeom
-from scipy.stats import chi2_contingency
+from scipy.stats import hypergeom, norm
+from scipy.stats import chi2_contingency, fisher_exact
 
 from collections import defaultdict, OrderedDict
+import itertools
 
 from scipy.special import expit
 import matplotlib.pyplot as plt
 from matplotlib.cm import ScalarMappable, hsv
 
+import polars as pl
 
 import progressbar
 def makeProgressBar() -> progressbar.ProgressBar:
@@ -225,14 +227,17 @@ def to_fuzzy(value, fzy):
 
 def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
 
-    fuzzySet = [0] * len(fzMFs.terms)
 
     if sdValue is None:
-        return np.array([x for x in zip(fzMFs.terms, to_fuzzy(meanValue, fzMFs))])
+        return [x for x in to_fuzzy(meanValue, fzMFs)]
+        #return [list(x) for x in zip(fzMFs.terms, to_fuzzy(meanValue, fzMFs))]
 
+
+    fuzzySet = [0] * len(fzMFs.terms)
     if np.isnan(meanValue) or np.isnan(sdValue):
         fuzzySet[0] = 1
-        return [x for x in zip(fzMFs.terms, fuzzySet)]
+        #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
+        return [x for x in fuzzySet]
 
     normValues = np.random.normal(meanValue, sdValue, 100)
     
@@ -242,46 +247,67 @@ def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
     fuzzySet = fuzzySet / len(normValues)   
 
     fuzzySetNoExpr = [0] * len(fzMFs.terms)
-    fuzzySetNoExpr[1] = 1
+    fuzzySetNoExpr[0] = 1
 
     fuzzySet = (1-exprCells) * np.array(fuzzySetNoExpr) + exprCells * fuzzySet
     fuzzySet[fuzzySet < threshold] = 0
+    
+    fuzzySet = np.array(fuzzySet, dtype=np.float32) # this should always match identify_threshold_level 
     fuzzySet = fuzzySet / np.sum(fuzzySet)
-    outset = np.array([x for x in zip(fzMFs.terms, fuzzySet)])
+    
+    outset = [x for x in fuzzySet]
 
+    #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
     return outset
 
-def toWideDF( indf ):
-    dfPivot = pd.pivot(indf, index=["gene"], columns=["cluster"], values=["fuzzy_set"])
-    dfWide = dfPivot.copy()
-    dfWide.columns = dfWide.columns.droplevel(0)
-    dfWide.reset_index(inplace=True)
-    dfWide.reset_index(drop=True, inplace=True)
-    return dfWide
+def toWideDF( df ):
+    #dfPivot = pd.pivot(indf, index=["gene"], columns=["cluster"], values=["fuzzy_set"])
+    #dfWide = dfPivot.copy()
+    #dfWide.columns = dfWide.columns.droplevel(0)
+    #dfWide.reset_index(inplace=True)
+    #dfWide.reset_index(drop=True, inplace=True)
+    
+    dfPivot = df.pivot(values=["fuzzy.mfs"], index="gene", columns="cluster")
+    return dfPivot
 
 def to_homogeneous(df, exprMFs, is_foldchange=False):
 
     if not is_foldchange:
-        emptyElem = [x for x in zip(exprMFs.terms, to_fuzzy(0, exprMFs))]
+        fuzzyBins = [x for x in exprMFs.terms]
+        fuzzyValues = [float(x) for x in to_fuzzy(0, exprMFs)]
     else:
-        emptyElem = [x for x in zip(exprMFs.terms, to_fuzzy(0, exprMFs))]
+        fuzzyBins = [x for x in exprMFs.terms]
+        fuzzyValues = [float(x) for x in to_fuzzy(0, exprMFs)]
+        
+    #print(fuzzyBins)
+    #print(fuzzyValues)
 
-    dfc = df.copy()
-    dfc = dfc.applymap(lambda x: x if not x is np.nan else emptyElem)
+    for col in [x for x in df.columns if x.startswith("cluster.")]:
+        print(col)
+        df=df.with_column( 
+            pl.when(pl.col(col).is_null())
+            .then( fuzzyValues )
+            .otherwise(pl.col(col)).alias(col)
+        )
+        
+    return df
 
-    return dfc
+def identify_threshold_level(dfWideNew, force_calculation = False, clusterColumns=None):
 
-def identify_threshold_level(dfWideNew, force_calculation = False):
-
-    clusterColumns = [x for x in dfWideNew.columns if x.startswith("cluster.")]
-    explDF = dfWideNew.copy()
-    explDF.reset_index(drop=True, inplace=True)
+    if clusterColumns is None:
+        clusterColumns = [x for x in dfWideNew.columns if x.startswith("cluster.")]
+    else:
+        for x in clusterColumns:
+            assert x in dfWideNew.columns
+        
+    explDF = dfWideNew.clone()
+    #explDF.reset_index(drop=True, inplace=True)
 
     for thresholdIteration in range(0, 11, 1):
         currentThreshold = thresholdIteration * 0.05
 
-        explDF = dfWideNew.copy()
-        explDF.reset_index(drop=True, inplace=True)
+        explDF = dfWideNew.clone()
+        #explDF.reset_index(drop=True, inplace=True)
 
         print("Current Threshold", currentThreshold)
         finished = True
@@ -293,21 +319,21 @@ def identify_threshold_level(dfWideNew, force_calculation = False):
             initialCount = explDF.shape[0]
 
             explDF = explDF.explode(ccol)
-            explDF.reset_index(drop=True, inplace=True)
-            clDF = pd.DataFrame(explDF[ccol].to_list())
+
+
+            clDF = explDF.select(pl.col(ccol))
 
             binColName = "bin.{}".format(ccol)
             mfColName = "mf.{}".format(ccol)
 
             clDF.columns = [binColName, mfColName]
 
-            clDF[binColName] = clDF[binColName].astype("category")
-            clDF[mfColName] = clDF[mfColName].astype('float16')
+            clDF.with_column(pl.col(binColName).cast(pl.Categorical))
+            clDF.with_column(pl.col(mfColName).cast(pl.Float32))
 
-            explDF = pd.concat([explDF, clDF], axis=1)
-            explDF = explDF[ explDF[mfColName] > currentThreshold]
-
-            del explDF[ccol]
+            explDF = pl.concat([explDF, clDF])
+            explDF = explDF.filter(pl.col(mfColName) > currentThreshold)
+            explDF.drop(ccol, inplace=True)
 
             afterCount = explDF.shape[0]
 
@@ -385,24 +411,35 @@ class CustomFuzzyVar(FuzzyVariable):
             if shape == "tri":
                 unscaledValues += fuzz.trimf(self.universe, abc)
             elif shape == "gauss":
-                print(center_width)
                 unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
 
+
         # Repopulate
-        for name, abc, center_width in zip(names, abcs, cws):
+        for e, (name, abc, center_width) in enumerate(zip(names, abcs, cws)):
 
             if shape == "tri":
-                self[name] = fuzz.trimf(self.universe, abc)/unscaledValues
+                values = fuzz.trimf(self.universe, abc)/unscaledValues
             elif shape == "gauss":
-                self[name] = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
+                values = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
+                   
+                
+            half = int(len(values)/2)
+               
+            if e == 0:
+                values[:half][np.isnan(values[:half])] = 1    
+            elif e == len(names)-1:
+                values[half:][np.isnan(values[half:])] = 1
+            
+            values[np.isnan(values)] = 0
+            
+            self[name] =  values
 
 
         unscaledValues = np.array([0.0]*len(self.universe))
 
         for name in self.terms:
-            print(self.terms[name])
             unscaledValues += self.terms[name].mf
-
+            
         assert(abs(sum(unscaledValues)-len(self.universe)) < 1)
 
 
@@ -439,11 +476,11 @@ class FlowAnalysis:
 
 
         if "max.cluster" in exprData.columns:
-            minValue = np.floor(exprData["max.cluster"].min())
-            maxValue = np.ceil(exprData["max.cluster"].max())
+            minValue = np.floor(exprData.select(pl.col("max.cluster")).min())
+            maxValue = np.ceil(exprData.select(pl.col("max.cluster")).max())
         else:
-            minValue = np.floor(exprData[meancolName].min())
-            maxValue = np.ceil(exprData[meancolName].max())
+            minValue = np.floor(exprData.select(pl.col(meancolName)).min())
+            maxValue = np.ceil(exprData.select(pl.col(meancolName)).max())
 
         if mfLevelsMirrored:
             absValue = max(abs(minValue), abs(maxValue))
@@ -466,62 +503,98 @@ class FlowAnalysis:
         return exprMFs
 
     @classmethod
-    def exprDF2LongDF(cls, indf, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
+    def exprDF2LongDF(cls, indf:pl.internals.dataframe.frame.DataFrame, seriesOrder = None, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
 
-        exprData = indf.copy()
+        exprData = indf.clone()
 
         exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape)
 
-        meanExprCol = list(exprData.columns).index(meancolName)
-        exprCountCol = list(exprData.columns).index(exprcolName)
-
+        meanExprCol = exprData.columns.index(meancolName)
+        exprCountCol = exprData.columns.index(exprcolName)
+    
         if not sdcolName is None:
-            sdExprCol = list(exprData.columns).index(sdcolName)
+            sdExprCol = exprData.columns.index(sdcolName)
 
-        df = exprData.copy()
+        print("Mean Expr", meancolName, "col", meanExprCol)
+        print("Expr Count", exprcolName, "col", exprCountCol)
+        print("SD", sdcolName, "col", sdExprCol)
 
-        if not sdcolName is None:
-            df["fuzzy_set"] = df.apply(lambda row : distribution_to_fuzzy(row[meanExprCol], row[sdExprCol], row[exprCountCol], exprMFs, threshold=0.0), axis=1)
+
+        df = exprData.clone()
+                
+
+        if not sdcolName is None:          
+            dfOut = df.select(
+                pl.struct(["mean.cluster", "sd.cluster", "expr.cluster"]).apply(lambda x:
+                    distribution_to_fuzzy(x["mean.cluster"], x["sd.cluster"], x["expr.cluster"], exprMFs, threshold=0.0)
+                    ).alias("fuzzy.mfs")
+            )
         else:
             print("No SD col name given")
-            df["fuzzy_set"] = df.apply(lambda row : distribution_to_fuzzy(row[meanExprCol], None, row[exprCountCol], exprMFs, threshold=0.0), axis=1)
+            dfOut = df.select(
+                pl.struct(["mean.cluster", "expr.cluster"]).apply(lambda x:
+                    distribution_to_fuzzy(x["mean.cluster"], None, x["expr.cluster"], exprMFs, threshold=0.0)
+                    ).alias("fuzzy.mfs")
+            )        
 
+        df = pl.concat([df, dfOut], how="horizontal")        
         dfWide = to_homogeneous(toWideDF(df), exprMFs)
-        _, threshold = identify_threshold_level(dfWide)
-
-        print("Identified Threshold", threshold)
-
-        dfNew = exprData.copy()
-        if not sdcolName is None:
-            dfNew["fuzzy_set"] = dfNew.apply(lambda row : distribution_to_fuzzy(row[meanExprCol], row[sdExprCol], row[exprCountCol], exprMFs, threshold=0.0), axis=1)
-        else:
-            dfNew["fuzzy_set"] = dfNew.apply(lambda row : distribution_to_fuzzy(row[meanExprCol], None, row[exprCountCol], exprMFs, threshold=0.0), axis=1)
         
-        dfNewWide = to_homogeneous(toWideDF(dfNew), exprMFs)
-
-        explDF, _ = identify_threshold_level(dfNewWide, force_calculation=True)
-
-        return explDF, exprMFs
+        return dfWide, exprMFs
+    
+    @classmethod
+    def to_vwide(cls, indf, mfFuzzy):
+        
+        clusterCols = [x for x in indf.columns if x.startswith("cluster.")]
+        
+        outDF = indf.clone()
+        
+        for col in clusterCols:
+            outDF = outDF.with_column(
+                pl.struct([col]).apply(lambda x:
+                                dict(zip( [x+".{}".format(col) for x in mfFuzzy.terms] , x[col] ))
+                                ).alias("fuzzy.mfs")
+            ).unnest("fuzzy.mfs")
+            
+            outDF = outDF.drop(col)
+            
+        return outDF
 
     @classmethod
     def toFlowsDF(cls, indf):
 
-        explDF = indf.copy()
+        explDF = indf.clone()
         binColumns = [x for x in explDF.columns if x.startswith("bin.")]
+        binColumnsIndex = [explDF.columns.index(x) for x in binColumns]
         print(binColumns)
 
         mfColumns = [x.replace("bin.", "mf.") for x in binColumns]
         print(mfColumns)
-
-        explDF['group.flow'] = explDF.apply( lambda row: tuple( [row[x] for x in binColumns] ), axis=1)
-        explDF['mf.flow'] = explDF.apply( lambda row: np.prod( [row[x] for x in mfColumns] ), axis=1)
-        allgroups = list(set(explDF["group.flow"]))
-        explDF['id.flow'] = explDF.apply( lambda row: allgroups.index(row["group.flow"]), axis=1)
+        
+        df=df.with_column(df.apply( lambda row: tuple( [row[x] for x in binColumnsIndex] )).to_series().alias("group.flow"))
+        df=df.with_column(pl.struct(mfColumns).apply( lambda row: np.prod(row.values())).to_series().alias("mf.flow"))
+        
+        allgroups = list(set(df.select(pl.col("group.flow"))))
+        
+        flow2id = {}
+        for idx, flow in enumerate(allgroups):
+            flow2id[flow] = idx
+        
+        df=df.with_column(pl.struct(["group.flow"]).apply( lambda row: allgroups[row["group.flow"]] ).to_series().alias("id.flow"))
 
         return explDF
 
 
     def __init__(self, flows, symbol_column, series2name, exprMF):
+        
+            
+        for x in series2name:       
+            for term in exprMF.terms:
+                checkCol = "{}.cluster.{}".format(term, x[0])
+                if not checkCol in flows.columns:
+                    print("Missing column", checkCol)
+                    raise ValueError("Missing column {}".format(checkCol))
+        
         
         self.flows = flows
         self.seriesOrder = [x[0] for x in series2name]
@@ -529,10 +602,17 @@ class FlowAnalysis:
         self.symbol_column = symbol_column
         self.exprMF = exprMF
         self.levelOrder =  [x for x in self.exprMF.terms]
+        
+        
+        self.flowid2flow = {}
+        #self.flowid2indices = {}
+                
+        print("Creating FlowIDs")
+        for comb in list(itertools.product(self.levelOrder, repeat=len(series2name))):
+            
+            largeComp = [x for x in zip(self.series2name, comb)]           
+            self.flowid2flow[len(self.flowid2flow)] = largeComp
 
-        self.flows[self.symbol_column] = self.flows[self.symbol_column].str.upper()
-
-        self.flowgroup_flow, self.flowgroup_route, self.flowgroup_genes = self.prepare_flows()
 
     def prepare_flows(self, flowDF=None):
 
@@ -559,9 +639,9 @@ class FlowAnalysis:
     def plot_flows(self, use_flows = None, figsize=None):
 
         if use_flows is None:
-            use_flows = [x for x in self.flowgroup_route]
+            use_flows = [x for x in self.flowid2flow]
 
-        weightSequence = self._to_weight_sequence( self.flowgroup_route, self.flowgroup_flow, use_flows=use_flows)
+        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows)
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
@@ -570,51 +650,73 @@ class FlowAnalysis:
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
 
-        subsetFlows = self.flows.copy()
-        subsetFlows = subsetFlows[subsetFlows[self.symbol_column].isin(genes)]
+        useFlows = self.flows.filter( pl.col("gene").is_in(genes) )
 
-        print(subsetFlows.shape)
-
-        flowgroup_flow, flowgroup_route, flowgroup_genes = self.prepare_flows(subsetFlows)
-
-        weightSequence = self._to_weight_sequence( flowgroup_route, flowgroup_flow)
+        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=None)
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
-    def _to_weight_sequence(self, flowgroup_route, flowgroup_flow, use_flows=None):
-
-        if use_flows is None:
-            use_flows = [x for x in flowgroup_route]
-
-        weightSequence = []
-        for fgid in [x for x in use_flows]:
-            weightSequence.append( (fgid, tuple(flowgroup_route[fgid] + [flowgroup_flow.get(fgid, 0)])) )
-
-        return weightSequence
 
     def highlight_genes(self, genes, figsize=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
-
-        subsetFlows = self.flows.copy()
-        subsetFlows.loc[subsetFlows[self.symbol_column].isin(genes),"id.flow"] = -1
+            
+            
+        bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
+        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None)
         
-        subsetFlowsBG = subsetFlows[subsetFlows["id.flow"] != -1].copy()
-        subsetFlowsFG = subsetFlows[subsetFlows["id.flow"] == -1].copy()
+        fgData = self.flows.filter( pl.col("gene").is_in(genes) )
+        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, flowIDMod=lambda x: x*(-1))
+        specialColors = {x[0]: "red" for x in fgWeightSequence}
+        
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
 
-        flowgroup_flow, flowgroup_route, flowgroup_genes = self.prepare_flows(subsetFlowsBG)
-        weightSequenceBG = self._to_weight_sequence( flowgroup_route, flowgroup_flow)
+    
+    def _get_flow_columns(self, flowID):
+        
+        flow = self.flowid2flow[flowID]
+        # flow = [('control', 'NO'), ('sepsis', 'LOW')]
+        
+        flowCols = ["{}.cluster.{}".format(y,x) for x,y in flow]
+        #flowCols = ['NO.cluster.control', 'LOW.cluster.sepsis']
+        
+        return flowCols, flow
 
-        allgroups = list(set(subsetFlowsFG["group.flow"]))
-        subsetFlowsFG['id.flow'] = subsetFlowsFG.apply( lambda row: (-1)*(allgroups.index(row["group.flow"])+1), axis=1)
+    def _to_weight_sequence(self, flows, use_flows=None, flowIDMod=None):
+        """Generates weight-sequence for plotting flows
 
-        flowgroup_flow, flowgroup_route, flowgroup_genes = self.prepare_flows(subsetFlowsFG)
-        weightSequenceFG = self._to_weight_sequence( flowgroup_route, flowgroup_flow)
+        Args:
+            flows (pl.DataFrame): Flow-Dataframe used for plotting
+            use_flows (list, optional): flows to consider. Defaults to None. If None, all Flows will be plotted
+            flowIDMod (lambda, optional): if not None, applied to all flow ID results
 
-        specialColors = {x: "red" for x in set(subsetFlowsFG['id.flow'])}
-
-        SankeyPlotter._make_plot(weightSequenceBG+weightSequenceFG, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
+        Returns:
+            list: weight-sequence
+        """
+        
+        if use_flows is None:
+            use_flows = [x for x in self.flowid2flow]
+        
+        weightSequence = []
+        for fgid in self.flowid2flow:
+            if not fgid in use_flows:
+                continue
+            
+            # (fgid, [(("WT", 2), ("KO", 0), 1), .... )]
+            flowScore, flow = self._calculate_flow_score(flows, fgid)
+            
+            if not flowIDMod is None:
+                fgid = flowIDMod(fgid)
+            print(fgid, flow, flowScore)
+            
+            outlist = list(flow)
+            outlist.append(flowScore )
+            weightSequence.append(
+                (fgid, outlist)
+            )
+                                    
+        return weightSequence
 
     def flow_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
 
@@ -632,17 +734,16 @@ class FlowAnalysis:
 
         matchingFIDs = set()
 
-        fidGroups = self.flows[["id.flow", "group.flow"]]
-        fidGroups = fidGroups.drop_duplicates()
-
-        for fid, fgroup in zip(fidGroups["id.flow"], fidGroups["group.flow"]):
+        for fid in self.flowid2flow:
+            
+            fgroup = self.flowid2flow[fid]
 
             acceptFlow = True
             
             for ci, comp in zip(range(0, len(sequence)), sequence):
 
-                startIdx = seriesOrder.index(fgroup[ci])
-                endIdx = seriesOrder.index(fgroup[ci+1])
+                startIdx = seriesOrder.index(fgroup[ci][1])
+                endIdx = seriesOrder.index(fgroup[ci+1][1])
 
                 if not minLevels is None:
                     if (not minLevels[ci] is None and startIdx < seriesOrder.index(minLevels[ci])) or (not minLevels[ci+1] is None and endIdx < seriesOrder.index(minLevels[ci+1])):
@@ -682,6 +783,9 @@ class FlowAnalysis:
                     if not startIdx == endIdx:
                         acceptFlow=False
                         break
+                elif comp == "?":
+                    #always accept
+                    pass
 
                 if not acceptFlow:
                     break
@@ -710,11 +814,52 @@ class FlowAnalysis:
                 geneset2genes[pwID] = (pwName, pwGenes)
 
         return geneset2genes
+    
+    def read_gaf_file(self, filepath):
 
-    def analyse_pathways(self, pathways_gmt="ReactomePathways.gmt", additional_pathways=None, use_flows=None):
+        geneset2genes = defaultdict(set)
+        geneset2name = {}
+
+        with open(filepath) as fin:
+
+            for line in fin:
+                
+                if line.startswith("!"):
+                    continue
+
+                line = line.strip().split("\t")
+                pwName = line[4]
+                pwID = line[4]
+                pwGene = line[2].upper()
+                
+                geneset2name[pwID] = pwName
+                geneset2genes[pwID].add(pwGene)
+                
+        output = {}
+        for x in geneset2name:
+            output[x] = (x, geneset2genes[x])
+
+        return output
+
+    def get_pathways(self, pathways_file):
+        
+        print("Loading pathways from", pathways_file)
+        
+        if pathways_file.endswith("gmt"):
+            rp = self.read_gmt_file(pathways_file)
+        elif pathways_file.endswith("gaf"):
+            rp = self.read_gaf_file(pathways_file)
+        else:
+            raise ValueError("Invalid File Format")
+        
+        print("Identified", len(rp), "pathways")
+        
+        return rp
 
 
-        rp = self.read_gmt_file(pathways_gmt)
+    def analyse_pathways(self, pathways_file="ReactomePathways.gmt", additional_pathways=None, use_flows=None):
+
+        rp = self.get_pathways(pathways_file)
         
         if not additional_pathways is None:
             for pname, pgenes in additional_pathways:
@@ -725,16 +870,14 @@ class FlowAnalysis:
         bar = makeProgressBar()
 
         if use_flows is None:
-            use_flows = [x for x in self.flowgroup_route]
-
-        bg_df = self.flows[self.flows["id.flow"].isin(use_flows)]
+            use_flows = [x for x in self.flowid2flow]
 
         for fgid in bar(use_flows):
-            #print(fgid)
-
-            fg_df = self.flows[self.flows["id.flow"] == fgid]
-
-            df = self.analyse_genes_for_genesets(rp, fg_df, bg_df.copy())
+            
+            flowCols, _ = self._get_flow_columns(fgid)
+            flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
+                       
+            df = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
             df["fgid"] = fgid
 
             #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
@@ -743,33 +886,71 @@ class FlowAnalysis:
 
         allFGDFs = pd.concat(allDFs, axis=0)
 
-        _ , elemAdjPvals, _, _ = multipletests(allFGDFs["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
-        allFGDFs["adj_pval"] = elemAdjPvals
+        allFGDFs = self._calculate_pvalues(allFGDFs)
 
         return allFGDFs
 
-    def analyse_pathways_gropuped(self, use_flows, pathways_gmt="ReactomePathways.gmt", additional_pathways=None):
+    def analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None):
 
-
-        rp = self.read_gmt_file(pathways_gmt)
+        rp = self.get_pathways(pathways_file)
         
         if not additional_pathways is None:
             for pname, pgenes in additional_pathways:
                 rp[pname] = (pname, pgenes)
 
 
-        bg_df = self.flows[~self.flows["id.flow"].isin(use_flows)]
-
-        fg_df = self.flows[self.flows["id.flow"].isin(use_flows)]
-        fg_df[[self.symbol_column, "mf.flow"]].groupby(self.symbol_column).aggregate("sum")
-        allFGDFs = self.analyse_genes_for_genesets(rp, fg_df, bg_df.copy())
-
-        _ , elemAdjPvals, _, _ = multipletests(allFGDFs["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
-        allFGDFs["adj_pval"] = elemAdjPvals
-
+        flowCols = set()
+        
+        for fgid in use_flows:
+            fc, _ = self._get_flow_columns(fgid)
+            flowCols.update(fc)
+            
+        flowCols=list(flowCols)
+            
+        flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
+    
+        allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
+        
+        allFGDFs = self._calculate_pvalues(allFGDFs)
+        
         return allFGDFs
 
-    def analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, populationSize=None):
+
+    def _calculate_flow_score(self, flowDF, flowID):
+        
+        
+        flowCols, flow = self._get_flow_columns(flowID)
+        
+        if flowDF.shape[0] == 0:
+            return 0.0, flow
+
+        for col in flowCols:
+            if not col in flowDF.columns:
+                return 0.0, flow
+        
+        flowScore = flowDF.select(
+            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+        ).sum()[0,0]
+        
+        return flowScore, flow
+
+    def _calculate_pvalues(self, df):
+        
+        inDF = df.copy()
+        
+        pwC_mean = inDF[inDF.pw_coverage != 0].pw_coverage.mean()
+        pwC_std = inDF[inDF.pw_coverage != 0].pw_coverage.std(ddof=0)
+        
+        inDF["pw_coverage_zscore"] = (inDF["pw_coverage"]-pwC_mean)/pwC_std
+        inDF["pval"] = norm.sf(abs(inDF["pw_coverage_zscore"]))
+
+        _ , elemAdjPvals, _, _ = multipletests(inDF["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
+        inDF["adj_pval"] = elemAdjPvals
+        
+        return inDF
+
+
+    def analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, considerFlows=None, populationSize=None):
         """
         
         pathways: pathway object
@@ -778,9 +959,10 @@ class FlowAnalysis:
         populationSize: size of universe. if None, all genes in pathways will be chosen
         
         """
+        
+        if considerFlows is None:
+            considerFlows = [x for x in self.flowid2flow]
 
-        flowDF._is_copy = None
-        flowDF.loc[:, self.symbol_column] = list(flowDF.loc[:,self.symbol_column].str.upper())
 
         allPathwayGenes = set()
         for x in pathways:
@@ -788,64 +970,131 @@ class FlowAnalysis:
             for gene in pwGenes:
                 allPathwayGenes.add(gene)
 
-        allPathwayGenes = allPathwayGenes.intersection(bgFlowDF[self.symbol_column])
-
-        pwGeneFlow = bgFlowDF[bgFlowDF[self.symbol_column].isin(allPathwayGenes)]
-        totalFlowSumOfPathwayGenes = pwGeneFlow["mf.flow"].sum()
-
+        allPathwayGenes = list(allPathwayGenes.intersection(list(bgFlowDF.select(pl.col("gene")).to_series())))
+        
+        #print("Pathway Genes", len(allPathwayGenes))
+        #print("Measured Pathways Genes", len(allPathwayGenes))
+        
+               
         if populationSize is None:
-            populationSize = len(set(bgFlowDF[self.symbol_column]))
+            allPWGeneFlowDF = bgFlowDF.filter(pl.col(self.symbol_column).is_in(allPathwayGenes))
 
-        flowGenes = set(flowDF[self.symbol_column])
-        flowScore = flowDF["mf.flow"].sum()
-        numSuccInPopulation = len(allPathwayGenes)
+            totalFlowSumOfPathwayGenes = 0
+
+            for flowID in self.flowid2flow:
+                flowScore, _ = self._calculate_flow_score( allPWGeneFlowDF, flowID)
+                totalFlowSumOfPathwayGenes += flowScore
+            
+            populationSize = totalFlowSumOfPathwayGenes
+
+            #print("populationSize", populationSize)
+
+
+        flowGenes = set(flowDF.select(self.symbol_column).to_series())       
+        
+        allFlowsScore = 0
+        for flowID in considerFlows:
+            flowScore, _ = self._calculate_flow_score( flowDF.filter(pl.col(self.symbol_column).is_in(allPathwayGenes)), flowID)
+            #
+            allFlowsScore += flowScore
+            
+        #print("AllFlowScore", allFlowsScore)
         
         outData = defaultdict(list)
 
         for pwID in pathways:
 
             pwName, pwGenes = pathways[pwID]
-            inflow_inset = flowGenes.intersection(pwGenes)
+            pwGenes = list(pwGenes)
+            inflow_inset = list(flowGenes.intersection(pwGenes))
 
-            pathwayDF = flowDF[flowDF[self.symbol_column].isin(pwGenes)]
-            flowInPathwayScore = pathwayDF["mf.flow"].sum()
+            pathwayDF = flowDF.filter(pl.col(self.symbol_column).is_in(pwGenes))
+            
+            #print(pathwayDF.shape)
+            #print(list(pathwayDF.select(self.symbol_column).to_series()))
+        
+            flowInPathwayScore = 0
+            for flowID in considerFlows:
+                flowScore, _ = self._calculate_flow_score( pathwayDF, flowID)
+                flowInPathwayScore += flowScore
 
 
-            if abs(flowInPathwayScore) < 1 or abs(flowScore) < 1:
+            if abs(flowInPathwayScore) < 0 or abs(allFlowsScore) < 0:
                 chi2 = 0
                 pval = 1.0
             else:
 
                 #inflow inflow_inset
                 #not-inflow not-inflow_inset
+                
+                #TBL = rbind(c(x1,x2), c(n1-x1, n2-x2))
+                #x1 = 1680000;  n1 = 12000000
+                #x2 = 3;  n2 = 30
+                
+                # n1/n2 = populations (n1: global, n2: pathway)
+                # x1/x2 = ofinterest (x1: flow-score-all-pathways, flow-score-of-pathway)
+                
 
-                table=np.array([[flowScore,flowInPathwayScore], #len(inflow_inset)
-                                [populationSize-flowScore,len(pwGenes)-flowInPathwayScore]
+                table=np.array([
+                                [allFlowsScore,flowInPathwayScore], #len(inflow_inset)
+                                [populationSize-allFlowsScore,len(pwGenes)-flowInPathwayScore] # 
                             ])
+                
+                if np.any(table < 0) or pwID == "hsa04740" or pwName == "hsa04740":
+                    print(pwID)
+                    print(table)
+                    print(pwName)
+
+                    print("pwFlow, x2", flowInPathwayScore)
+                    print("pwGenes, n2", len(pwGenes))
+                    print("allPwFlow, x1", allFlowsScore)
+                    print("allPwGenes, n2", populationSize)
+                    
+                    #return None
+                    
+                
                 chi2, pval, dof, expected=chi2_contingency(table, correction=True)
+                
+                if flowInPathwayScore <= expected[0][1]:
+                    pval=1.0
+                
+                if pwName == "hsa04740":
+                    print("expected", expected)
 
             # population: all genes
             # condition: genes
             # subset: pathway
 
-            genes_coverage = flowInPathwayScore / flowScore if flowScore > 0 else 0
+            genes_coverage = flowInPathwayScore / allFlowsScore if allFlowsScore > 0 else 0
             pathway_coverage = flowInPathwayScore / len(pwGenes) if len(pwGenes) > 0 else 0
 
             outData["pwid"].append(pwID)
             outData["pwname"].append(pwName)
-            outData["flow_pw_score"].append(flowInPathwayScore)
-            outData["pwsize"].append(len(pwGenes))
-            outData["flow_score"].append(flowScore)
-            outData["flow_size"].append(len(flowGenes))
+            outData["pwFlow"].append(flowInPathwayScore)
+            outData["pwGenes"].append(len(pwGenes))
+            outData["allPwFlow"].append(allFlowsScore)
+            outData["allPwGenes"].append(populationSize)
 
             outData["pw_gene_intersection"].append(len(inflow_inset))
             outData["pw_coverage"].append(pathway_coverage)
             outData["genes_coverage"].append(genes_coverage)
-            outData["pval"].append(pval)
-            outData["chi2"].append(chi2)
+            #outData["pval"].append(pval)
+            #outData["chi2"].append(chi2)
             outData["mean_coverage"].append(pathway_coverage*genes_coverage)
 
-        return pd.DataFrame.from_dict(outData)
+        outdf = pd.DataFrame.from_dict(outData)       
+
+        return outdf
+
+
+
+
+
+
+
+
+
+
 
 
     def custom_div_cmap(self, numcolors=11, name='custom_div_cmap',
@@ -897,12 +1146,12 @@ class FlowAnalysis:
         if "pw_coverage" in df_raw.columns and "genes_coverage" in df_raw.columns:
             #ORA
             rvb = self.custom_div_cmap(150, mincol=color2, maxcol=color3, midcol=None)
-            colorValues = [rvb(x/df.pwsize.max()) for x in df.pwsize]
+            colorValues = [rvb(x/df.pwGenes.max()) for x in df.pwGenes]
 
         else:
             raise ValueError()
 
-        df['termtitle'] = makeTitle(df_raw[termNameColumn], df_raw[termIDColumn], df["flow_pw_score"],df["pwsize"])
+        df['termtitle'] = makeTitle(df_raw[termNameColumn], df_raw[termIDColumn], df["pwFlow"],df["pwGenes"])
 
 
         #df.sort_values('adj_pval', inplace=True, ascending=True)
@@ -927,7 +1176,7 @@ class FlowAnalysis:
         ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
         
         sizeFactor = 10    
-        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwsize*sizeFactor, c=colorValues, alpha=0.7, )
+        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
 
         handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
         labels = [x for x in labels]
