@@ -1,8 +1,20 @@
 # FlowSet
 
-### FlowSet: an integrative approach to analyse discrete-series data using fuzzy concepts
+## FlowSet: an integrative approach to analyse discrete-series data using fuzzy concepts
 
 ---
+![GitHub top language](https://img.shields.io/github/languages/top/mjoppich/FlowSets)
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/mjoppich/FlowSets)
+
+#### Contact
+
+[Felix Offensperger](https://github.com/offenspergerfelix)
+
+[Markus Joppich](https://ibio.dev/) [![GitHub followers](https://img.shields.io/github/followers/mjoppich?style=social)](https://github.com/mjoppich) [![Twitter Follow](https://img.shields.io/twitter/follow/mjoppich?style=social&logo=twitter)](https://twitter.com/intent/follow?screen_name=mjoppich)
+
+
+---
+
 
 <img src="https://github.com/mjoppich/FlowSets/blob/main/examples/ddiff_flows.png" width="500px" />
 
@@ -35,7 +47,7 @@ The data frame can then be read in python and used for analysis. [The example an
 
 ### Differential data
 
-Similar to the expression data case, we first need to prepare the differential expression data for each **TimePoint**:
+Similar to the expression data case, we first need to prepare the differential expression data for each **TimePoint**
 
     
     celltype = "Monocytes-Immune-system"
@@ -85,9 +97,3 @@ Similar to the expression data case, we first need to prepare the differential e
 The combined dataframe is then ready for usage in the FlowSet framework. [The example analysis is available here.](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
 
 
-
-## Contact
-
-[Felix Offensperger](https://github.com/offenspergerfelix)
-
-[Markus Joppich](https://ibio.dev/) [![GitHub followers](https://img.shields.io/github/followers/mjoppich?style=social)](https://github.com/mjoppich) [![Twitter Follow](https://img.shields.io/twitter/follow/mjoppich?style=social&logo=twitter)](https://twitter.com/intent/follow?screen_name=mjoppich)
