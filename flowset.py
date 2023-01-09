@@ -16,7 +16,8 @@ import itertools
 
 from scipy.special import expit
 import matplotlib.pyplot as plt
-from matplotlib.cm import ScalarMappable, hsv
+import matplotlib as mpl
+from matplotlib.cm import ScalarMappable, hsv, get_cmap
 
 import polars as pl
 
@@ -112,7 +113,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None):
 
         nodePositions = {}
 
@@ -213,8 +214,19 @@ class SankeyPlotter:
         #plt.ylim((minNodeLevel-1.5, maxNodeLevel+0.5))
         #plt.subplots_adjust(left=0.4, right=0.6, bottom=0.4, top=0.6)
         #plt.tight_layout()
+        
+        if not cmap is None:
+            #cb_ax = fig.add_axes([0.27, 0.8, 0.5, 0.05])            
+            cb = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='horizontal', shrink=0.25, fraction=0.005)
+            cb.set_label("Membership")
+        
+        
         plt.xlim(minXValue-1, maxXValue+1)
         plt.ylim(minYValue-2, maxYValue+2)
+        
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
 
         plt.show()
         plt.close()
@@ -636,16 +648,16 @@ class FlowAnalysis:
         return flowgroup_flow, flowgroup_route, flowgroup_genes
 
 
-    def plot_flows(self, use_flows = None, figsize=None):
+    def plot_flows(self, use_flows = None, figsize=None, outfile=None):
 
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
 
         weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
-    def plot_genes(self, genes, figsize=None):
+    def plot_genes(self, genes, figsize=None, outfile=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -654,10 +666,10 @@ class FlowAnalysis:
 
         weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=None)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
 
-    def highlight_genes(self, genes, figsize=None):
+    def highlight_genes(self, genes, figsize=None, outfile=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -670,7 +682,32 @@ class FlowAnalysis:
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, flowIDMod=lambda x: x*(-1))
         specialColors = {x[0]: "red" for x in fgWeightSequence}
         
-        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize)
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
+
+
+    def visualize_genes(self, genes, figsize=None, outfile=None):
+
+        if not isinstance(genes, (tuple, list)):
+            genes = [genes]
+            
+            
+        bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
+        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None)
+        
+        fgData = self.flows.filter( pl.col("gene").is_in(genes) )
+        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, flowIDMod=lambda x: x*(-1))
+        
+        #print(fgWeightSequence)
+        maxFlowValue = max([ x[1][-1] for x in fgWeightSequence])
+        #print(maxFlowValue)
+
+        cmap = get_cmap("cividis")
+        norm = mpl.colors.Normalize(vmin=0, vmax=maxFlowValue)
+        
+        specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile)
+
+
 
     
     def _get_flow_columns(self, flowID):
@@ -708,7 +745,7 @@ class FlowAnalysis:
             
             if not flowIDMod is None:
                 fgid = flowIDMod(fgid)
-            print(fgid, flow, flowScore)
+            #print(fgid, flow, flowScore)
             
             outlist = list(flow)
             outlist.append(flowScore )
@@ -934,20 +971,41 @@ class FlowAnalysis:
         
         return flowScore, flow
 
-    def _calculate_pvalues(self, df):
+    def _calculate_pvalues(self, df, set_size_threshold=[5, 50, 100]):
         
         inDF = df.copy()
         
-        pwC_mean = inDF[inDF.pw_coverage != 0].pw_coverage.mean()
-        pwC_std = inDF[inDF.pw_coverage != 0].pw_coverage.std(ddof=0)
+        resultDFs = []
+        lastThreshold=-1
         
-        inDF["pw_coverage_zscore"] = (inDF["pw_coverage"]-pwC_mean)/pwC_std
-        inDF["pval"] = norm.sf(abs(inDF["pw_coverage_zscore"]))
+        set_size_threshold = list(sorted(set(set_size_threshold)))
+        
+        if set_size_threshold[-1] < inDF.pwGenes.max():
+            set_size_threshold.append( inDF.pwGenes.max()+1 )
+        
+        print("Calculating p-values for groups", set_size_threshold)
+        
+        for t in set_size_threshold:
+            
+            curDF = inDF[(inDF.pwGenes > lastThreshold) & (inDF.pwGenes <= t)].copy()
+        
+            pwC_mean = curDF[curDF.pw_coverage != 0].pw_coverage.mean()
+            pwC_std = curDF[curDF.pw_coverage != 0].pw_coverage.std(ddof=0)
+            
+            curDF["pw_coverage_zscore"] = (curDF["pw_coverage"]-pwC_mean)/pwC_std
+            curDF["pval"] = norm.sf(abs(curDF["pw_coverage_zscore"]))
 
-        _ , elemAdjPvals, _, _ = multipletests(inDF["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
-        inDF["adj_pval"] = elemAdjPvals
+            curDF.loc[curDF["pw_coverage_zscore"] < 0, "pval"] = 1.0
+            lastThreshold = t
+            
+            resultDFs.append(curDF)
+
+        outDF = pd.concat(resultDFs, axis=0)
+
+        _ , elemAdjPvals, _, _ = multipletests(outDF["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
+        outDF["adj_pval"] = elemAdjPvals
         
-        return inDF
+        return outDF
 
 
     def analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, considerFlows=None, populationSize=None):
@@ -1019,47 +1077,48 @@ class FlowAnalysis:
                 flowInPathwayScore += flowScore
 
 
-            if abs(flowInPathwayScore) < 0 or abs(allFlowsScore) < 0:
-                chi2 = 0
-                pval = 1.0
-            else:
+            if False:
+                if abs(flowInPathwayScore) < 0 or abs(allFlowsScore) < 0:
+                    chi2 = 0
+                    pval = 1.0
+                else:
 
-                #inflow inflow_inset
-                #not-inflow not-inflow_inset
-                
-                #TBL = rbind(c(x1,x2), c(n1-x1, n2-x2))
-                #x1 = 1680000;  n1 = 12000000
-                #x2 = 3;  n2 = 30
-                
-                # n1/n2 = populations (n1: global, n2: pathway)
-                # x1/x2 = ofinterest (x1: flow-score-all-pathways, flow-score-of-pathway)
-                
-
-                table=np.array([
-                                [allFlowsScore,flowInPathwayScore], #len(inflow_inset)
-                                [populationSize-allFlowsScore,len(pwGenes)-flowInPathwayScore] # 
-                            ])
-                
-                if np.any(table < 0) or pwID == "hsa04740" or pwName == "hsa04740":
-                    print(pwID)
-                    print(table)
-                    print(pwName)
-
-                    print("pwFlow, x2", flowInPathwayScore)
-                    print("pwGenes, n2", len(pwGenes))
-                    print("allPwFlow, x1", allFlowsScore)
-                    print("allPwGenes, n2", populationSize)
+                    #inflow inflow_inset
+                    #not-inflow not-inflow_inset
                     
-                    #return None
+                    #TBL = rbind(c(x1,x2), c(n1-x1, n2-x2))
+                    #x1 = 1680000;  n1 = 12000000
+                    #x2 = 3;  n2 = 30
                     
-                
-                chi2, pval, dof, expected=chi2_contingency(table, correction=True)
-                
-                if flowInPathwayScore <= expected[0][1]:
-                    pval=1.0
-                
-                if pwName == "hsa04740":
-                    print("expected", expected)
+                    # n1/n2 = populations (n1: global, n2: pathway)
+                    # x1/x2 = ofinterest (x1: flow-score-all-pathways, flow-score-of-pathway)
+                    
+
+                    table=np.array([
+                                    [allFlowsScore,flowInPathwayScore], #len(inflow_inset)
+                                    [populationSize-allFlowsScore,len(pwGenes)-flowInPathwayScore] # 
+                                ])
+                    
+                    if np.any(table < 0) or pwID == "hsa04740" or pwName == "hsa04740":
+                        print(pwID)
+                        print(table)
+                        print(pwName)
+
+                        print("pwFlow, x2", flowInPathwayScore)
+                        print("pwGenes, n2", len(pwGenes))
+                        print("allPwFlow, x1", allFlowsScore)
+                        print("allPwGenes, n2", populationSize)
+                        
+                        #return None
+                        
+                    
+                    chi2, pval, dof, expected=chi2_contingency(table, correction=True)
+                    
+                    if flowInPathwayScore <= expected[0][1]:
+                        pval=1.0
+                    
+                    if pwName == "hsa04740":
+                        print("expected", expected)
 
             # population: all genes
             # condition: genes
@@ -1112,7 +1171,7 @@ class FlowAnalysis:
                                                 N=numcolors)
         return cmap
 
-    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10)):
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None):
         #https://www.programmersought.com/article/8628812000/
         
         def makeTitle(colDescr, colID, colSize, setSize):
@@ -1186,7 +1245,20 @@ class FlowAnalysis:
         ax.set_xlabel('Neg. Log. Adj. p-Value')
         ax.set_yticks(df.termtitle)
         ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
+        
+        plt.tick_params(axis='x', which="major", length=7, width=2)
+        plt.tick_params(axis='x', which="minor", length=5, width=2)
+        
+        ax.set_xscale('log')
+        from matplotlib.ticker import ScalarFormatter
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+        
         plt.grid(b=None)
         plt.tight_layout()
         plt.yticks(fontsize=16)
+        
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+        
         plt.show()
