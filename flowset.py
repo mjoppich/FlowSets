@@ -437,10 +437,12 @@ class CustomFuzzyVar(FuzzyVariable):
                 
             half = int(len(values)/2)
                
+            index_center = self.universe.tolist().index(abc[1])
+
             if e == 0:
-                values[:half][np.isnan(values[:half])] = 1    
+                values[:index_center][np.isnan(values[:index_center])] = 1    
             elif e == len(names)-1:
-                values[half:][np.isnan(values[half:])] = 1
+                values[index_center:][np.isnan(values[index_center:])] = 1
             
             values[np.isnan(values)] = 0
             
