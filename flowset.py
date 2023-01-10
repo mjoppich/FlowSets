@@ -436,8 +436,10 @@ class CustomFuzzyVar(FuzzyVariable):
                    
                 
             half = int(len(values)/2)
-               
-            index_center = self.universe.tolist().index(abc[1])
+            print(self.universe.tolist())
+
+            closest_to_center=self.universe.tolist()[min(range(len(self.universe.tolist())), key = lambda i: abs(self.universe.tolist()[i]-abc[1]))]
+            index_center = self.universe.tolist().index(closest_to_center)
 
             if e == 0:
                 values[:index_center][np.isnan(values[:index_center])] = 1    
