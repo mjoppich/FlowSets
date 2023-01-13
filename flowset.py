@@ -436,11 +436,14 @@ class CustomFuzzyVar(FuzzyVariable):
                    
                 
             half = int(len(values)/2)
-               
+
+            closest_to_center=self.universe.tolist()[min(range(len(self.universe.tolist())), key = lambda i: abs(self.universe.tolist()[i]-abc[1]))]
+            index_center = self.universe.tolist().index(closest_to_center)
+
             if e == 0:
-                values[:half][np.isnan(values[:half])] = 1    
+                values[:index_center][np.isnan(values[:index_center])] = 1    
             elif e == len(names)-1:
-                values[half:][np.isnan(values[half:])] = 1
+                values[index_center:][np.isnan(values[index_center:])] = 1
             
             values[np.isnan(values)] = 0
             
@@ -471,13 +474,15 @@ def to_arg_max(df, exprMFs):
 
 
 
+def filter_weightSequence(weightSequence,cutoff=0.01):
+    if cutoff > 0:
+        filter = [x[1][-1] > cutoff  for x in weightSequence]
+        return [i for (i, v) in zip(weightSequence, filter) if v]
+    else:
+        return weightSequence
 
-
-
-
-
-
-
+def top_weightSequence(weightSequence,top=10):
+    return [weightSequence[i] for i in range(top)]
 
 
 
@@ -657,16 +662,38 @@ class FlowAnalysis:
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
-    def plot_genes(self, genes, figsize=None, outfile=None):
+    
+    def plot_state_memberships(self,genes,name):
+        import seaborn as sns
+        filtered_flow=self.flows.filter(pl.col("gene").is_in(genes) )
+
+        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)
+        # OR sort by states; switch hlines for correct white lines
+        #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
+        pd_filtered_flow["order1"]=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in pd_filtered_flow.index]]
+        pd_filtered_flow["order2"]=[x.split('.')[2] for x in pd_filtered_flow.index] 
+        pd_filtered_flow= pd_filtered_flow.sort_values(["order1","order2"])
+        pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
+        plt.figure()
+        sns.set(font_scale=.7)
+        ax=sns.heatmap(pd_filtered_flow)
+        ax.set(title=name)
+        ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
+
+        return(ax)
+
+    def plot_genes(self, genes, figsize=None, outfile=None, cutoff=0.01):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
 
-        useFlows = self.flows.filter( pl.col("gene").is_in(genes) )
+        #useFlows = self.flows.filter( self.flows["gene"].to_pandas().isin(genes).tolist())
+        useFlows = self.flows.filter(pl.col("gene").is_in(genes) )
 
-        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=None)
+        weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=None)
+        weightSequence=filter_weightSequence(weightSequence,cutoff=cutoff)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: x, fsize=figsize, outfile=outfile)
 
 
     def highlight_genes(self, genes, figsize=None, outfile=None):
@@ -706,6 +733,38 @@ class FlowAnalysis:
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile)
+
+    def plot_flow_memberships(self,flowDF,use_flows):
+        flowCols = set()
+        
+        for fgid in use_flows:
+            fc, _ = self._get_flow_columns(fgid)
+            flowCols.update(fc)
+                    
+        flowCols=list(flowCols)
+
+        flowScore_perGene = flowDF.select([self.symbol_column,
+                    pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                ]       
+                )
+
+        flowScore_perGene=flowScore_perGene.sort("pwscore",reverse=True)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        n=50
+        ax2.barh(range(n),flowScore_perGene["pwscore"][range(n)])
+        ax2.set_yticks(range(n),flowScore_perGene[self.symbol_column][range(n)])
+        ax2.tick_params(axis="y",labelsize=4)
+        ax2.set_title("Top 50 memberships of flow")
+        ax2.invert_yaxis()
+
+        flowScore_perGene=flowScore_perGene.with_column(
+            pl.col("pwscore").round(1)
+        )
+        counted_scores=flowScore_perGene.select("pwscore").to_series().value_counts()
+        print(counted_scores)
+        ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
+        ax1.set_title("Binned membership histogram")
 
 
 
