@@ -1005,7 +1005,7 @@ class FlowAnalysis:
             
         flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
     
-        allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
+        allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=use_flows)
         
         allFGDFs = self._calculate_pvalues(allFGDFs)
         
