@@ -1070,7 +1070,7 @@ class FlowAnalysis:
         
         return flowScore, flow
 
-    def _calculate_pvalues(self, df, set_size_threshold=[5, 50, 100]):
+    def _calculate_pvalues(self, df, set_size_threshold=[ 2, 10, 50, 100]):
         
         inDF = df.copy()
         
