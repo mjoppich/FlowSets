@@ -77,6 +77,10 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# R data
+*.rds
+
+
 # IPython
 profile_default/
 ipython_config.py

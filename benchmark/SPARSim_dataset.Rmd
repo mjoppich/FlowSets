@@ -1,0 +1,205 @@
+---
+title: "SPARSim"
+output: html_document
+date: "2022-12-06"
+---
+
+```{r setup}
+library(SPARSim)
+library(dplyr)
+library(Seurat)
+libary(qusage)
+library(stringr)
+```
+
+```{r Define Inputs}
+
+if( ! file.exists("ReactomePathways.gmt")){
+      #download_and_unzip("https://reactome.org/download/current/ReactomePathways.gmt.zip", ".", "ReactomePathways.gmt.zip", ".")
+
+      temp <- tempfile()
+      download.file("https://reactome.org/download/current/ReactomePathways.gmt.zip",temp)
+      Reactome <- qusage::read.gmt(unzip(temp, exdir = "./"))
+      unlink(temp)
+}else{
+      Reactome <- qusage::read.gmt("ReactomePathways.gmt")
+
+}
+
+
+genes=sort(unique(unlist(Reactome)))
+
+```
+
+
+```{r Define Inputs}
+
+#Here the general parameters will be set
+#Set here to empirical measured parameters
+if(TRUE){
+  #c("Tung_param_preset", "Camp_param_preset", "Engel_param_preset", "Chu_param_preset", "Horning_param_preset", "Bacher_param_preset", "Brain_10X_param_preset", "T_10X_param_preset", "PBMC_10X_param_preset", "Zheng_param_preset", "Macosko_param_preset", "Saunders_param_preset")
+  # should match reactome names
+  data("PBMC_10X_param_preset")
+  intensity= PBMC_10X_param_preset[[1]]$intensity
+
+  genes_df=data.frame(names=names(intensity))
+  library('biomaRt')
+  mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+  G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes_df$name,mart= mart)
+
+  genes_df= merge(genes_df,G_list,by.x="names",by.y="ensembl_gene_id",all.x=TRUE)
+  
+  genes_df$hgnc_symbol[duplicated(genes_df$hgnc_symbol)] <- NA
+
+  genes_df[is.na(genes_df$hgnc_symbol),]$hgnc_symbol=paste0("NA_",1:sum(is.na(genes_df$hgnc_symbol)))
+  
+  genes=genes_df$hgnc_symbol
+  names(intensity)=genes
+  
+  n_genes=length(genes)
+  variability=PBMC_10X_param_preset[[1]]$variability
+  library_size=PBMC_10X_param_preset[[1]]$lib_size
+  n_cells=length(library_size)
+
+}else{
+n_genes=length(genes)
+n_cells=100
+intensity=runif(n = n_genes, min = 0, max = 10000)
+names(intensity)=genes
+variability = runif(n = n_genes, min = 0.001, max = .5)
+names(variability)=genes
+library_size = round(rnorm(n = n_cells, mean = 4*10^6, sd = 10^3))
+names(library_size)=paste0("Cell",1:n_cells)
+}
+#Set states
+states=c("timepoint01","timepoint02","timepoint03","timepoint04")
+
+hist(log10(intensity+1))
+parameter_list=lapply(states,function(x)
+  list(intensity=intensity,variability=variability,library_size=library_size,feature_names=genes,sample_names=paste0(x,"-Cell",1:n_cells),condition_name=x)
+  )
+names(parameter_list)=states
+
+#Set scaling for changes
+#Here for every state a scaling factor can be set which will be applied to every gene in the geneset
+changes=list()
+
+set.seed(1) 
+
+pathways_per_trend=10
+
+trends=list(c(1,1,4,4),c(1,8,8,1),c(1,1,.25,.25))
+
+random_pathways=sample(names(Reactome), length(trends)*pathways_per_trend)
+
+random_pathways=split(random_pathways,1:length(trends))
+
+for(i in 1:length(trends)){
+  subset_pathways=unlist(random_pathways[i],use.names = FALSE)
+  for(p in subset_pathways){
+    changes[[p]]=unlist(trends[i])
+    print(p)
+  }
+}
+
+#changes[["Glycerophospholipid catabolism"]]=c(1,1,4,4)
+#changes[["Glutathione synthesis and recycling"]]=c(1,1,4,4)
+#changes[["G1 Phase"]]=c(1,8,8,1)
+#changes[["Glutathione synthesis and recycling"]]=c(1,8,8,1)
+#changes[["Formation of apoptosome"]]=c(1,1,.25,.25)
+#changes[["Downstream signaling of activated FGFR4"]]=c(1,1,.25,.25)
+changes_df=data.frame(Reduce(rbind, changes))
+rownames(changes_df)=names(changes)
+colnames(changes_df)=states
+write.table(changes_df,file = "simulated_changingPathways_random.tsv",sep="\t",row.names = TRUE,col.names=TRUE,quote = FALSE)
+
+
+for(c in names(changes)){
+  scaling=changes[[c]]
+  geneset=Reactome[[c]]
+  for(i in 1:length(parameter_list)){
+    name_i=names(parameter_list)[i]
+    #hist(log10(parameter_list[[i]]$intensity[genes %in% geneset]+1))
+    parameter_list[[i]]$intensity[genes %in% geneset]=parameter_list[[i]]$intensity[genes %in% geneset]*scaling[i]
+  }
+}
+
+print(summary(parameter_list))
+intensity_matrix=do.call(cbind,lapply(parameter_list,function(x)x$intensity))
+print("Changing genes:")
+intensity_matrix[unlist(apply(intensity_matrix,1, sd, na.rm = TRUE))!=0, ]
+```
+
+
+```{r SPARSim}
+param_per_condition=lapply(parameter_list,function(x)
+  
+
+  SPARSim_create_simulation_parameter(
+                                  intensity = x$intensity, 
+                                  variability = x$variability, 
+                                  library_size = x$library_size,
+                                  feature_names = x$feature_names, 
+                                  sample_names =x$sample_names, 
+                                  condition_name = x$condition_name)
+  
+  )
+sim_result <- SPARSim_simulation(dataset_parameter = param_per_condition)
+
+
+condition_vector=sapply(stringr::str_split(colnames(sim_result$count_matrix),"-"), "[[", 1)
+```
+
+
+
+```{r Seurat,fig.width=16}
+
+sObject <- CreateSeuratObject(counts = sim_result$count_matrix, project = "simulated", min.cells = 3, min.features = 200)
+sObject[["percent.mt"]] <- PercentageFeatureSet(sObject, pattern = "^MT-")
+
+VlnPlot(sObject, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1 <- FeatureScatter(sObject, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(sObject, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+sObject <- NormalizeData(sObject, normalization.method = "LogNormalize", scale.factor = 10000)
+sObject <- FindVariableFeatures(sObject, selection.method = "vst", nfeatures = 2000)
+top10 <- head(VariableFeatures(sObject), 10)
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(sObject)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+all.genes <- rownames(sObject)
+sObject <- ScaleData(sObject, features = all.genes)
+
+sObject <- RunPCA(sObject, features = VariableFeatures(object = sObject))
+print(sObject[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(sObject, dims = 1:2, reduction = "pca")
+DimPlot(sObject, reduction = "pca")
+
+DimHeatmap(sObject, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(sObject, dims = 1:15, cells = 500, balanced = TRUE)
+sObject <- FindNeighbors(sObject, dims = 1:1)
+sObject <- FindClusters(sObject, resolution = 0.5)
+head(Idents(sObject), 5)
+
+sObject <- RunUMAP(sObject, dims = 1:10)
+DimPlot(sObject, reduction = "umap")
+
+sObject[["cell_names"]] <- condition_vector
+DimPlot(sObject, group.by = "cell_names") + NoLegend()
+```
+
+
+```{r Seurat,fig.width=16}
+source("https://raw.githubusercontent.com/mjoppich/FlowSets/main/seurat_util_functions.R")
+saveRDS(sObject, file = "simulated_scdata_random.rds")
+
+
+summarised_data=getExtendedExpressionData(sObject,group.by="cell_names")
+
+write.table(summarised_data,file = "summarised_simulated_scdata_random.tsv",sep="\t",row.names = FALSE,col.names=TRUE,quote = FALSE)
+
+write.table(intensity_matrix[unlist(apply(intensity_matrix,1, sd, na.rm = TRUE))!=0, ],file = "simulated_changingGenes_random.tsv",sep="\t",row.names = TRUE,col.names=TRUE,quote = FALSE)
+
+```
