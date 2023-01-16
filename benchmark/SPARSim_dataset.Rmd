@@ -154,6 +154,9 @@ condition_vector=sapply(stringr::str_split(colnames(sim_result$count_matrix),"-"
 
 ```{r Seurat,fig.width=16}
 
+rownames(sim_result$count_matrix)=make.names(rownames(sim_result$count_matrix))
+colnames(sim_result$count_matrix)=make.names(colnames(sim_result$count_matrix))
+
 sObject <- CreateSeuratObject(counts = sim_result$count_matrix, project = "simulated", min.cells = 3, min.features = 200)
 sObject[["percent.mt"]] <- PercentageFeatureSet(sObject, pattern = "^MT-")
 
