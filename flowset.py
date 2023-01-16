@@ -672,7 +672,7 @@ class FlowAnalysis:
     
     def plot_state_memberships(self,genes,name):
         import seaborn as sns
-        filtered_flow=self.flows.filter(pl.col("gene").is_in(genes) )
+        filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
         pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)
         # OR sort by states; switch hlines for correct white lines
@@ -742,38 +742,73 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile)
 
     def plot_flow_memberships(self,flowDF,use_flows):
-        flowCols = set()
+        flowScores = pl.DataFrame()
         
         for fgid in use_flows:
-            fc, _ = self._get_flow_columns(fgid)
-            flowCols.update(fc)
-                    
-        flowCols=list(flowCols)
+            
+            flowCols, flow = self._get_flow_columns(fgid)
 
-        flowScore_perGene = flowDF.select([self.symbol_column,
-                    pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-                ]       
-                )
+            flowScore_perGene = flowDF.select([self.symbol_column,
+                        pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                    ]       
+                    )
+            flowScore_perGene.columns=[self.symbol_column,str(fgid) ]
 
-        flowScore_perGene=flowScore_perGene.sort("pwscore",reverse=True)
+            if flowScores.shape == (0,0):
+                flowScores=flowScore_perGene
+            else:
+                flowScores=flowScores.join(flowScore_perGene,on=self.symbol_column,how="inner")
+        ## here also coloring bars content from flows would be possible
+        flowScores_df= flowScores.select([self.symbol_column,
+                        pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
+                    ]       
+        )
 
+        flowScores_df=flowScores_df.sort("pwscore",reverse=True)
         fig, (ax1, ax2) = plt.subplots(1, 2)
         n=50
-        ax2.barh(range(n),flowScore_perGene["pwscore"][range(n)])
-        ax2.set_yticks(range(n),flowScore_perGene[self.symbol_column][range(n)])
+        ax2.barh(range(n),flowScores_df["pwscore"][range(n)])
+        ax2.set_yticks(range(n),flowScores_df[self.symbol_column][range(n)])
         ax2.tick_params(axis="y",labelsize=4)
         ax2.set_title("Top 50 memberships of flow")
         ax2.invert_yaxis()
 
-        flowScore_perGene=flowScore_perGene.with_column(
+        flowScores_df=flowScores_df.with_column(
             pl.col("pwscore").round(1)
         )
-        counted_scores=flowScore_perGene.select("pwscore").to_series().value_counts()
+        counted_scores=flowScores_df.select("pwscore").to_series().value_counts()
         print(counted_scores)
         ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
         ax1.set_title("Binned membership histogram")
 
+    def plot_genes_membership(self,genes,use_flows=None):
+        genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
+        if use_flows is None:
+                    use_flows = [x for x in self.flowid2flow]
 
+        weightSequence = self._to_weight_sequence( flows=genes_flow, use_flows=use_flows)
+
+        fgid=[x[0] for x in weightSequence]
+        membership=[x[1][-1] for x in weightSequence]
+
+        flowScores_df=pl.DataFrame({'fgid':fgid, 'membership':membership})
+
+        flowScores_df=flowScores_df.sort("membership",reverse=True)
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        n=50
+        ax2.barh(range(n),flowScores_df["membership"][range(n)])
+        ax2.set_yticks(range(n),flowScores_df["fgid"][range(n)])
+        ax2.tick_params(axis="y",labelsize=4)
+        ax2.set_title("Top 50 memberships of flow")
+        ax2.invert_yaxis()
+
+        flowScores_df=flowScores_df.with_column(
+            pl.col("membership").round(1)
+        )
+        counted_scores=flowScores_df.select("membership").to_series().value_counts()
+        #print(counted_scores)
+        ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
+        ax1.set_title("Binned membership histogram")
 
     
     def _get_flow_columns(self, flowID):
@@ -884,6 +919,11 @@ class FlowAnalysis:
                         break
                 elif comp == "=":
                     if not startIdx == endIdx:
+                        acceptFlow=False
+                        break
+                elif comp == "~":
+                    #circa
+                    if not (startIdx == endIdx or startIdx == endIdx+1 or startIdx == endIdx -1) :
                         acceptFlow=False
                         break
                 elif comp == "?":
