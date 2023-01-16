@@ -653,14 +653,21 @@ class FlowAnalysis:
         return flowgroup_flow, flowgroup_route, flowgroup_genes
 
 
-    def plot_flows(self, use_flows = None, figsize=None, outfile=None):
+    def plot_flows(self, use_flows = None, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts = lambda x: np.sqrt(x), verbose=False):
 
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
 
-        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows)
+        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
+        
+        if not min_flow is None and min_flow > 0:
+            weightSequence = [x for x in weightSequence if x[1][-1] > min_flow]
+            
+        if verbose:
+            for x in weightSequence:
+                print(x)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
 
     
     def plot_state_memberships(self,genes,name):
@@ -779,7 +786,7 @@ class FlowAnalysis:
         
         return flowCols, flow
 
-    def _to_weight_sequence(self, flows, use_flows=None, flowIDMod=None):
+    def _to_weight_sequence(self, flows, use_flows=None, flowIDMod=None, min_gene_flow=None):
         """Generates weight-sequence for plotting flows
 
         Args:
@@ -800,7 +807,7 @@ class FlowAnalysis:
                 continue
             
             # (fgid, [(("WT", 2), ("KO", 0), 1), .... )]
-            flowScore, flow = self._calculate_flow_score(flows, fgid)
+            flowScore, flow = self._calculate_flow_score(flows, fgid, min_gene_flow=min_gene_flow)
             
             if not flowIDMod is None:
                 fgid = flowIDMod(fgid)
@@ -1012,7 +1019,7 @@ class FlowAnalysis:
         return allFGDFs
 
 
-    def _calculate_flow_score(self, flowDF, flowID):
+    def _calculate_flow_score(self, flowDF, flowID, min_gene_flow=None):
         
         
         flowCols, flow = self._get_flow_columns(flowID)
@@ -1024,9 +1031,14 @@ class FlowAnalysis:
             if not col in flowDF.columns:
                 return 0.0, flow
         
-        flowScore = flowDF.select(
+        flowScoreDF = flowDF.select(
             pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-        ).sum()[0,0]
+        )
+        
+        if not min_gene_flow is None and min_gene_flow > 0.0:
+            flowScoreDF = flowScoreDF.filter(pl.col("pwscore") > min_gene_flow)
+        
+        flowScore = flowScoreDF.sum()[0,0]
         
         return flowScore, flow
 
