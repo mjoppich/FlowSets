@@ -682,7 +682,7 @@ class FlowAnalysis:
 
         return(ax)
 
-    def plot_genes(self, genes, figsize=None, outfile=None, cutoff=0.01):
+    def plot_genes(self, genes, figsize=None, outfile=None, cutoff=0.01,use_flows=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -690,7 +690,7 @@ class FlowAnalysis:
         #useFlows = self.flows.filter( self.flows["gene"].to_pandas().isin(genes).tolist())
         useFlows = self.flows.filter(pl.col("gene").is_in(genes) )
 
-        weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=None)
+        weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=use_flows)
         weightSequence=filter_weightSequence(weightSequence,cutoff=cutoff)
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: x, fsize=figsize, outfile=outfile)
@@ -787,6 +787,7 @@ class FlowAnalysis:
         flowScores_df=pl.DataFrame({'fgid':fgid, 'membership':membership})
 
         flowScores_df=flowScores_df.sort("membership",reverse=True)
+        print(flowScores_df)
         fig, (ax1, ax2) = plt.subplots(1, 2)
         n=50
         ax2.barh(range(n),flowScores_df["membership"][range(n)])
