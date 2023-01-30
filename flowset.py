@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import skfuzzy as fuzz
 from skfuzzy.control.fuzzyvariable import FuzzyVariable
+from skfuzzy.control.visualization import FuzzyVariableVisualizer
 from statsmodels.stats.multitest import multipletests
 
 from natsort import natsorted
@@ -241,9 +242,9 @@ def to_fuzzy(value, fzy):
     )
 
 
-def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
+def distribution_to_fuzzy( meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
 
-
+    
     if sdValue is None:
         return [x for x in to_fuzzy(meanValue, fzMFs)]
         #return [list(x) for x in zip(fzMFs.terms, to_fuzzy(meanValue, fzMFs))]
@@ -287,19 +288,26 @@ def toWideDF( df ):
     return dfPivot
 
 def to_homogeneous(df, exprMFs, is_foldchange=False):
-
-    if not is_foldchange:
-        fuzzyBins = [x for x in exprMFs.terms]
-        fuzzyValues = [float(x) for x in to_fuzzy(0, exprMFs)]
-    else:
-        fuzzyBins = [x for x in exprMFs.terms]
-        fuzzyValues = [float(x) for x in to_fuzzy(0, exprMFs)]
         
     #print(fuzzyBins)
     #print(fuzzyValues)
 
-    for col in [x for x in df.columns if x.startswith("cluster.")]:
-        print(col)
+    print(df.head())
+
+    for col in exprMFs:
+        
+        colname = "cluster.{}".format(col)
+        print(col, "-->", colname)
+                
+        exprMF = exprMFs[col]
+        
+        if not is_foldchange:
+            #fuzzyBins = [x for x in exprMF.terms]
+            fuzzyValues = [float(x) for x in to_fuzzy(0, exprMF)]
+        else:
+            #fuzzyBins = [x for x in exprMF.terms]
+            fuzzyValues = [float(x) for x in to_fuzzy(0, exprMF)]
+        
         df=df.with_column( 
             pl.when(pl.col(col).is_null())
             .then( fuzzyValues )
@@ -378,6 +386,13 @@ class CustomFuzzyVar(FuzzyVariable):
     def __init__(self, universe, label):
         super().__init__(universe, label)
 
+    def view(self, title=None, *args, **kwargs):
+        """""" + FuzzyVariableVisualizer.view.__doc__
+        fig, ax = FuzzyVariableVisualizer(self).view(*args, **kwargs)
+        if not title is None:
+            ax.set_title(title)
+        fig.show()
+
 
     def automf(self, number=5, names=None, centers=None, shape="tri"):
 
@@ -391,28 +406,25 @@ class CustomFuzzyVar(FuzzyVariable):
         universe_range = limits[1] - limits[0]
         widths = [universe_range / ((number - 1) / 2.)] * int(number)
 
-        if centers is None:
-            centers = np.linspace(limits[0], limits[1], number)
-            widths = [universe_range / ((number - 1) / 2.)] * int(number)
-        else:
-            widths = []
-            for i in range(0, len(centers)-1):
-                leftWidth = None
-                rightWidth = None
 
-                if i > 0:
-                    leftWidth = centers[i]-centers[i-1]
-                
-                rightWidth = centers[i+1]-centers[i]
+        widths = []
+        for i in range(0, len(centers)-1):
+            leftWidth = None
+            rightWidth = None
 
-                if not leftWidth is None:
-                    avgWidth = (rightWidth+leftWidth)/2
-                else:
-                    avgWidth = rightWidth
+            if i > 0:
+                leftWidth = centers[i]-centers[i-1]
+            
+            rightWidth = centers[i+1]-centers[i]
 
-                widths.append(2*avgWidth)
+            if not leftWidth is None:
+                avgWidth = (rightWidth+leftWidth)/2
+            else:
+                avgWidth = rightWidth
 
-            widths.append(2*(centers[-1]-centers[-2]))
+            widths.append(2*avgWidth)
+
+        widths.append(2*(centers[-1]-centers[-2]))
             
 
         abcs = [[c - w / 2, c, c + w / 2] for c, w in zip(centers, widths)]
@@ -428,7 +440,8 @@ class CustomFuzzyVar(FuzzyVariable):
                 unscaledValues += fuzz.trimf(self.universe, abc)
             elif shape == "gauss":
                 unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
-
+            else:
+                raise ValueError("Shape not implemented" + str(shape))
 
         # Repopulate
         for e, (name, abc, center_width) in enumerate(zip(names, abcs, cws)):
@@ -437,6 +450,8 @@ class CustomFuzzyVar(FuzzyVariable):
                 values = fuzz.trimf(self.universe, abc)/unscaledValues
             elif shape == "gauss":
                 values = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
+            else:
+                raise ValueError("Shape not implemented" + str(shape))
                    
                 
             half = int(len(values)/2)
@@ -493,9 +508,11 @@ def top_weightSequence(weightSequence,top=10):
 class FlowAnalysis:
 
     @classmethod
-    def make_fuzzy_concepts(cls, exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=None, shape="tri"):
-
-
+    def make_fuzzy_concepts(cls, exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=None, shape="tri", series = None, perSeriesFuzzy=False, **kwargs):
+        
+        exprMFs = {}
+        availableClusters =  set([x for x in exprData.get_column(clusterColName)])
+        
         if "max.cluster" in exprData.columns:
             minValue = np.floor(exprData.select(pl.col("max.cluster")).min())
             maxValue = np.ceil(exprData.select(pl.col("max.cluster")).max())
@@ -507,31 +524,70 @@ class FlowAnalysis:
             absValue = max(abs(minValue), abs(maxValue))
             minValue = -absValue
             maxValue = absValue
-
             assert(len(mfLevels) % 2 == 1)
-
-        print("Creating Range", minValue, "->", maxValue)
-
+        
         if stepsize is None:
             stepsize = min(0.1, (maxValue-minValue)/200)
             print("Fuzzy Step Size", stepsize)
 
-        exprMFs = CustomFuzzyVar(np.arange(minValue, maxValue, stepsize), 'exprMFs')
-        exprMFs.automf(len(mfLevels), names=mfLevels, centers=centers, shape=shape) 
-        # You can see how these look with .view()
-        exprMFs.view()
+        print("Creating Universe Range", minValue, "->", maxValue, "with step size", stepsize)
+
+        
+        if not perSeriesFuzzy:
+            
+            if (not "centerMode" in kwargs and centers is None) or kwargs.get("centerMode", None) == "minmax":
+                centers = np.linspace(minValue, maxValue, len(mfLevels))
+                
+                #widths = [universe_range / ((number - 1) / 2.)] * int(number)                                
+            elif kwargs.get("centerMode", None) == "quantile":
+                
+                quantileLimits = kwargs["centerQuantiles"]
+                
+                limits = np.quantile(exprData.select(pl.col(meancolName)), quantileLimits)
+                
+                limitRange = limits[1]-limits[0]
+                limitStep = limitRange / len(mfLevels)
+                centers = [limits[0] + x for x in range(0, limitRange, limitStep)]
+                
+                print("Limit Range", limitRange)
+                print("Limit Step", limitRange)
+                
+                
+            print("centers", centers)
+
+            exprMF = CustomFuzzyVar(np.arange(minValue, maxValue, stepsize), 'exprMFs')
+            exprMF.automf(len(mfLevels), names=mfLevels, centers=centers, shape=shape) 
+            
+            for series in availableClusters:
+                exprMFs[series] = exprMF
+            
+            exprMF.view("All MFs")
+            
+        else:
+            
+            # per series fuzzyfication
+            for series in availableClusters:
+                
+                subsetExprData = exprData.filter(pl.col(clusterColName) == series)
+                
+                subsetMFs = cls.make_fuzzy_concepts(exprData=subsetExprData, mfLevels=mfLevels, centers=centers, clusterColName=clusterColName, meancolName=meancolName, mfLevelsMirrored=mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=False)
+                
+                exprMFs[series] = subsetMFs
+                exprMFs.view(series)
 
         return exprMFs
 
+
     @classmethod
-    def exprDF2LongDF(cls, indf:pl.internals.dataframe.frame.DataFrame, seriesOrder = None, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
+    def fuzzify_exprvalues(cls, indf:pl.internals.dataframe.frame.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,  meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None, **kwargs):
 
         exprData = indf.clone()
 
-        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape)
+        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, kwargs=kwargs)
 
         meanExprCol = exprData.columns.index(meancolName)
         exprCountCol = exprData.columns.index(exprcolName)
+        clusterCol = exprData.columns.index(clusterColName)
     
         sdExprCol=-1
         if not sdcolName is None:
@@ -540,41 +596,61 @@ class FlowAnalysis:
         print("Mean Expr", meancolName, "col", meanExprCol)
         print("Expr Count", exprcolName, "col", exprCountCol)
         print("SD", sdcolName, "col", sdExprCol)
-
+        print("Cluster", clusterColName, "col", clusterCol)
 
         df = exprData.clone()
                 
+        availableClusters =  set([x for x in exprData.get_column(clusterColName)])
+        fuzzyOuts = []
+        for seriesName in availableClusters:
+            
+            indf = df.filter(pl.col(clusterColName) == seriesName)
 
-        if not sdcolName is None:          
-            dfOut = df.select(
-                pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
-                    distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs, threshold=0.0)
-                    ).alias("fuzzy.mfs")
-            )
-        else:
-            print("No SD col name given")
-            dfOut = df.select(
-                pl.struct([meancolName, exprcolName]).apply(lambda x:
-                    distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs, threshold=0.0)
-                    ).alias("fuzzy.mfs")
-            )        
+            if not sdcolName is None:          
+                seriesOut = indf.select(
+                    pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
+                        distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                        ).alias("fuzzy.mfs")
+                )
+            else:
+                print("No SD col name given")
+                seriesOut = indf.select(
+                    pl.struct([meancolName, exprcolName]).apply(lambda x:
+                        distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                        ).alias("fuzzy.mfs")
+                )    
+            fuzzyOuts.append(seriesOut)    
 
-        df = pl.concat([df, dfOut], how="horizontal")        
+        dfOut = pl.concat(fuzzyOuts, how="vertical")
+
+        df = pl.concat([df, dfOut], how="horizontal")           
         dfWide = to_homogeneous(toWideDF(df), exprMFs)
         
         return dfWide, exprMFs
+
+
+
+    @classmethod
+    def exprDF2LongDF(cls, indf:pl.internals.dataframe.frame.DataFrame, seriesOrder = None, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
+
+        return cls.fuzzify_exprvalues(indf, seriesOrder=seriesOrder, mfLevels=mfLevels, mfLevelsMirrored=mfLevelsMirrored, centers=centers, meancolName=meancolName, sdcolName=sdcolName, exprcolName=exprcolName, shape=shape, stepsize=stepsize)
+
+        
     
     @classmethod
     def to_vwide(cls, indf, mfFuzzy):
         
         clusterCols = [x for x in indf.columns if x.startswith("cluster.")]
         
+        for col in clusterCols:
+            assert(col in mfFuzzy)
+        
         outDF = indf.clone()
         
         for col in clusterCols:
             outDF = outDF.with_column(
                 pl.struct([col]).apply(lambda x:
-                                dict(zip( [x+".{}".format(col) for x in mfFuzzy.terms] , x[col] ))
+                                dict(zip( [x+".{}".format(col) for x in mfFuzzy[col].terms] , x[col] ))
                                 ).alias("fuzzy.mfs")
             ).unnest("fuzzy.mfs")
             
