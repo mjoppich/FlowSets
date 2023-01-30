@@ -296,8 +296,7 @@ def to_homogeneous(df, exprMFs, is_foldchange=False):
 
     for col in exprMFs:
         
-        colname = "cluster.{}".format(col)
-        print(col, "-->", colname)
+        print(col)
                 
         exprMF = exprMFs[col]
         
@@ -686,8 +685,9 @@ class FlowAnalysis:
     def __init__(self, flows, symbol_column, series2name, exprMF):
         
             
-        for x in series2name:       
-            for term in exprMF.terms:
+        for x in series2name:
+            clusterName = "cluster.{}".format(x[0])
+            for term in exprMF[clusterName].terms:
                 checkCol = "{}.cluster.{}".format(term, x[0])
                 if not checkCol in flows.columns:
                     print("Missing column", checkCol)
@@ -699,7 +699,9 @@ class FlowAnalysis:
         self.series2name = {x[0]: x[1] for x in series2name}
         self.symbol_column = symbol_column
         self.exprMF = exprMF
-        self.levelOrder =  [x for x in self.exprMF.terms]
+        
+        firstState = list(self.exprMF.keys())[0]
+        self.levelOrder =  [x for x in self.exprMF[firstState].terms]
         
         
         self.flowid2flow = {}
@@ -951,7 +953,8 @@ class FlowAnalysis:
 
     def flow_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
 
-        seriesOrder = list(self.exprMF.terms.keys())
+        firstState = list(self.exprMF.keys())[0]
+        seriesOrder = list(self.exprMF[firstState].terms.keys())
 
         if not minLevels is None:
             for x in minLevels:
