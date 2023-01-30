@@ -113,7 +113,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None):
 
         nodePositions = {}
 
@@ -223,6 +223,10 @@ class SankeyPlotter:
         
         plt.xlim(minXValue-1, maxXValue+1)
         plt.ylim(minYValue-2, maxYValue+2)
+        
+        if not title is None:
+            print("Adding title", title)
+            plt.title(title)
         
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
@@ -474,12 +478,12 @@ def to_arg_max(df, exprMFs):
 
 
 
-def filter_weightSequence(weightSequence,cutoff=0.01):
-    if cutoff > 0:
-        filter = [x[1][-1] > cutoff  for x in weightSequence]
-        return [i for (i, v) in zip(weightSequence, filter) if v]
+def filter_weightSequence(weightSequence,cutoff=None):
+    if not cutoff is None and cutoff > 0:
+        return [x for x in weightSequence if x[1][-1] > cutoff]
     else:
         return weightSequence
+
 
 def top_weightSequence(weightSequence,top=10):
     return [weightSequence[i] for i in range(top)]
@@ -529,6 +533,7 @@ class FlowAnalysis:
         meanExprCol = exprData.columns.index(meancolName)
         exprCountCol = exprData.columns.index(exprcolName)
     
+        sdExprCol=-1
         if not sdcolName is None:
             sdExprCol = exprData.columns.index(sdcolName)
 
@@ -542,15 +547,15 @@ class FlowAnalysis:
 
         if not sdcolName is None:          
             dfOut = df.select(
-                pl.struct(["mean.cluster", "sd.cluster", "expr.cluster"]).apply(lambda x:
-                    distribution_to_fuzzy(x["mean.cluster"], x["sd.cluster"], x["expr.cluster"], exprMFs, threshold=0.0)
+                pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
+                    distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs, threshold=0.0)
                     ).alias("fuzzy.mfs")
             )
         else:
             print("No SD col name given")
             dfOut = df.select(
-                pl.struct(["mean.cluster", "expr.cluster"]).apply(lambda x:
-                    distribution_to_fuzzy(x["mean.cluster"], None, x["expr.cluster"], exprMFs, threshold=0.0)
+                pl.struct([meancolName, exprcolName]).apply(lambda x:
+                    distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs, threshold=0.0)
                     ).alias("fuzzy.mfs")
             )        
 
@@ -660,8 +665,7 @@ class FlowAnalysis:
 
         weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
         
-        if not min_flow is None and min_flow > 0:
-            weightSequence = [x for x in weightSequence if x[1][-1] > min_flow]
+        weightSequence = filter_weightSequence(weightSequence, min_flow)          
             
         if verbose:
             for x in weightSequence:
@@ -689,7 +693,7 @@ class FlowAnalysis:
 
         return(ax)
 
-    def plot_genes(self, genes, figsize=None, outfile=None, cutoff=0.01):
+    def plot_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -698,38 +702,50 @@ class FlowAnalysis:
         useFlows = self.flows.filter(pl.col("gene").is_in(genes) )
 
         weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=None)
-        weightSequence=filter_weightSequence(weightSequence,cutoff=cutoff)
+        weightSequence = filter_weightSequence(weightSequence, min_flow)  
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: x, fsize=figsize, outfile=outfile)
 
 
-    def highlight_genes(self, genes, figsize=None, outfile=None):
+    def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
             
             
         bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
-        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None)
+        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None, min_gene_flow=min_gene_flow)
+        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)
+        
+        survivedFlows = [x[0] for x in bgWeightSequence]
         
         fgData = self.flows.filter( pl.col("gene").is_in(genes) )
-        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, flowIDMod=lambda x: x*(-1))
+        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, min_gene_flow=min_gene_flow, flowIDMod=lambda x: x*(-1))
+        
+        fgWeightSequence = [x for x in fgWeightSequence if x[0]*(-1) in survivedFlows]
+
         specialColors = {x[0]: "red" for x in fgWeightSequence}
         
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
 
-    def visualize_genes(self, genes, figsize=None, outfile=None):
+    def visualize_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None, title=None):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
             
+        if use_flows is None:
+            use_flows = [x for x in self.flowid2flow]
             
-        bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
-        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None)
+            
+        #bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
+        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
+        
+        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
+
         
         fgData = self.flows.filter( pl.col("gene").is_in(genes) )
-        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, flowIDMod=lambda x: x*(-1))
+        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=use_flows, min_gene_flow=min_gene_flow, flowIDMod=None)#lambda x: x*(-1))
         
         #print(fgWeightSequence)
         maxFlowValue = max([ x[1][-1] for x in fgWeightSequence])
@@ -739,7 +755,7 @@ class FlowAnalysis:
         norm = mpl.colors.Normalize(vmin=0, vmax=maxFlowValue)
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
-        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile)
+        SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title)
 
     def plot_flow_memberships(self,flowDF,use_flows):
         flowScores = pl.DataFrame()
@@ -1000,7 +1016,7 @@ class FlowAnalysis:
         return rp
 
 
-    def analyse_pathways(self, pathways_file="ReactomePathways.gmt", additional_pathways=None, use_flows=None):
+    def analyse_pathways(self, pathways_file="ReactomePathways.gmt", additional_pathways=None, use_flows=None, parallel=True):
 
         rp = self.get_pathways(pathways_file)
         
@@ -1015,25 +1031,53 @@ class FlowAnalysis:
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
 
-        for fgid in bar(use_flows):
+
+        if parallel:
             
-            flowCols, _ = self._get_flow_columns(fgid)
-            flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
-                       
-            df = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
-            df["fgid"] = fgid
+            
+            def prepare_flow_analysis_df(fa, fgid):
+                flowCols, _ = fa._get_flow_columns(fgid)
+                flowDF = fa.flows.select(pl.col(flowCols + [fa.symbol_column]))
+                        
+                df = fa.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=fa.flows, considerFlows=[fgid])
+                df["fgid"] = fgid
+                return df
+            
+            
+            print("Starting Event Loop")
+            from joblib import Parallel, delayed, parallel_backend
+            
+            with parallel_backend('loky', n_jobs=8):
+                results = Parallel()(delayed(prepare_flow_analysis_df)(self, fgid) for fgid in use_flows)
 
-            #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
+                for idx, res in enumerate(results):
+                    allDFs.append(res)
+            
+            print("Event Loop Completed")
+            
+            
+        else:
 
-            allDFs.append(df)
+            for fgid in bar(use_flows):
+                
+                flowCols, _ = self._get_flow_columns(fgid)
+                flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
+                        
+                df = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
+                df["fgid"] = fgid
+
+                #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
+
+                allDFs.append(df)
+
+
 
         allFGDFs = pd.concat(allDFs, axis=0)
-
         allFGDFs = self._calculate_pvalues(allFGDFs)
 
         return allFGDFs
 
-    def analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None):
+    def analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 2, 10, 50, 100]):
 
         rp = self.get_pathways(pathways_file)
         
@@ -1054,7 +1098,7 @@ class FlowAnalysis:
     
         allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=use_flows)
         
-        allFGDFs = self._calculate_pvalues(allFGDFs)
+        allFGDFs = self._calculate_pvalues(allFGDFs, set_size_threshold=set_size_threshold)
         
         return allFGDFs
 
@@ -1078,11 +1122,18 @@ class FlowAnalysis:
         if not min_gene_flow is None and min_gene_flow > 0.0:
             flowScoreDF = flowScoreDF.filter(pl.col("pwscore") > min_gene_flow)
         
+        
+        if flowScoreDF.shape[0] == 0:
+            return 0, flow
+        
         flowScore = flowScoreDF.sum()[0,0]
         
         return flowScore, flow
 
-    def _calculate_pvalues(self, df, set_size_threshold=[ 2, 10, 50, 100]):
+    def _calculate_pvalues(self, df, set_size_threshold=None):
+        
+        if set_size_threshold is None:
+            set_size_threshold = [ 1, 5, 10, 50, 100]
         
         inDF = df.copy()
         
