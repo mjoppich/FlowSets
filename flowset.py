@@ -232,13 +232,23 @@ class SankeyPlotter:
         plt.close()
 
 def to_fuzzy(value, fzy):
+
     return np.array(
         [fuzz.interp_membership(fzy.universe, fzy[x].mf, value) for x in fzy.terms]
     )
 
+def to_crisp(value, fzy):
+    value=round(value,1)
+    return np.array(
+        [round(fuzz.interp_membership(fzy.universe, fzy[x].mf, value),0) for x in fzy.terms]
+    )
+
+def distribution_to_crisp(meanValue,fzMFs, threshold=0.0):
+    return [x for x in to_crisp(meanValue, fzMFs)]
+
+
 
 def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
-
 
     if sdValue is None:
         return [x for x in to_fuzzy(meanValue, fzMFs)]
@@ -252,7 +262,6 @@ def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
         return [x for x in fuzzySet]
 
     normValues = np.random.normal(meanValue, sdValue, 100)
-    
     for v in normValues:
         fuzzySet += to_fuzzy(v, fzMFs)
 
@@ -268,7 +277,6 @@ def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
     fuzzySet = fuzzySet / np.sum(fuzzySet)
     
     outset = [x for x in fuzzySet]
-
     #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
     return outset
 
@@ -377,7 +385,7 @@ class CustomFuzzyVar(FuzzyVariable):
 
     def automf(self, number=5, names=None, centers=None, shape="tri"):
 
-        assert(shape in ("tri", "gauss"))
+        assert(shape in ("tri", "gauss","crisp"))
         assert(len(names) == number)
 
         if not centers is None:
@@ -416,15 +424,15 @@ class CustomFuzzyVar(FuzzyVariable):
 
         # Clear existing adjectives, if any
         self.terms = OrderedDict()
-
         unscaledValues = np.array([0.0]*len(self.universe))
-        for name, abc, center_width in zip(names, abcs, cws):
+   
 
+        for name, abc, center_width in zip(names, abcs, cws):
             if shape == "tri":
                 unscaledValues += fuzz.trimf(self.universe, abc)
             elif shape == "gauss":
                 unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
-
+            #ignore case "crisp" here, it is scaled
 
         # Repopulate
         for e, (name, abc, center_width) in enumerate(zip(names, abcs, cws)):
@@ -433,7 +441,10 @@ class CustomFuzzyVar(FuzzyVariable):
                 values = fuzz.trimf(self.universe, abc)/unscaledValues
             elif shape == "gauss":
                 values = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
-                   
+            elif shape == "crisp":
+               
+                values= np.array( [ 1 if (x>=(center_width[0]-center_width[1]/2) and x<(center_width[0]+center_width[1]/2)) else float("nan") for x in self.universe ] )
+      
                 
             half = int(len(values)/2)
 
@@ -453,8 +464,9 @@ class CustomFuzzyVar(FuzzyVariable):
         unscaledValues = np.array([0.0]*len(self.universe))
 
         for name in self.terms:
+
             unscaledValues += self.terms[name].mf
-            
+
         assert(abs(sum(unscaledValues)-len(self.universe)) < 1)
 
 
@@ -516,7 +528,6 @@ class FlowAnalysis:
         exprMFs.automf(len(mfLevels), names=mfLevels, centers=centers, shape=shape) 
         # You can see how these look with .view()
         exprMFs.view()
-
         return exprMFs
 
     @classmethod
@@ -527,10 +538,18 @@ class FlowAnalysis:
         exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape)
 
         meanExprCol = exprData.columns.index(meancolName)
-        exprCountCol = exprData.columns.index(exprcolName)
+        if not exprcolName is None:
+            exprCountCol = exprData.columns.index(exprcolName)
+        else:
+
+            exprData=exprData.with_column(pl.lit(1).alias("cell_expr"))
+            exprCountCol = exprData.columns.index("cell_expr")
+
     
         if not sdcolName is None:
             sdExprCol = exprData.columns.index(sdcolName)
+        else:
+            sdExprCol=None
 
         print("Mean Expr", meancolName, "col", meanExprCol)
         print("Expr Count", exprcolName, "col", exprCountCol)
@@ -538,22 +557,28 @@ class FlowAnalysis:
 
 
         df = exprData.clone()
-                
+        if shape=="crisp":
+            print("Crisp mode, different assignment")
 
-        if not sdcolName is None:          
-            dfOut = df.select(
-                pl.struct(["mean.cluster", "sd.cluster", "expr.cluster"]).apply(lambda x:
-                    distribution_to_fuzzy(x["mean.cluster"], x["sd.cluster"], x["expr.cluster"], exprMFs, threshold=0.0)
-                    ).alias("fuzzy.mfs")
-            )
-        else:
-            print("No SD col name given")
             dfOut = df.select(
                 pl.struct(["mean.cluster", "expr.cluster"]).apply(lambda x:
-                    distribution_to_fuzzy(x["mean.cluster"], None, x["expr.cluster"], exprMFs, threshold=0.0)
+                    distribution_to_crisp(x["mean.cluster"], exprMFs, threshold=0.0)
                     ).alias("fuzzy.mfs")
-            )        
-
+            )         
+        else:
+            if not sdcolName is None:          
+                dfOut = df.select(
+                    pl.struct(["mean.cluster", "sd.cluster", "expr.cluster"]).apply(lambda x:
+                        distribution_to_fuzzy(x["mean.cluster"], x["sd.cluster"], x["expr.cluster"], exprMFs, threshold=0.0)
+                        ).alias("fuzzy.mfs")
+                )
+            else:
+                print("No SD col name given")
+                dfOut = df.select(
+                    pl.struct(["mean.cluster", "expr.cluster"]).apply(lambda x:
+                        distribution_to_fuzzy(x["mean.cluster"], None, x["expr.cluster"], exprMFs, threshold=0.0)
+                        ).alias("fuzzy.mfs")
+                )        
         df = pl.concat([df, dfOut], how="horizontal")        
         dfWide = to_homogeneous(toWideDF(df), exprMFs)
         
@@ -662,7 +687,26 @@ class FlowAnalysis:
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
-    
+    def hist_level_membershipsum(self):
+        import seaborn as sns
+
+        flowDF=self.flows
+        colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_column(
+            pl.fold(0, lambda acc, s: acc + s, pl.all().exclude("column")).alias("horizontal_sum")
+        )
+        order1=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in colmeans.select(['column']).to_series()]]
+        order2=[x.split('.')[2] for x in colmeans.select(['column']).to_series()] 
+
+        colmeans=colmeans.with_column(pl.Series(name="order1", values=order1))
+        colmeans=colmeans.with_column(pl.Series(name="order2", values=order2))
+        fig, ax = plt.subplots()
+        bar=sns.barplot(data=colmeans.to_pandas(), x="order1", y="horizontal_sum", hue="order2")
+        ax.set_xticklabels(self.levelOrder)
+        ax.set_xlabel("Levels")
+        ax.set_ylabel("Membership sum")
+        ax.legend(title='State')
+        fig.show()
+        
     def plot_state_memberships(self,genes,name):
         import seaborn as sns
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
@@ -675,7 +719,7 @@ class FlowAnalysis:
         pd_filtered_flow= pd_filtered_flow.sort_values(["order1","order2"])
         pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
         plt.figure()
-        sns.set(font_scale=.7)
+        sns.set(font_scale=.4)
         ax=sns.heatmap(pd_filtered_flow)
         ax.set(title=name)
         ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
@@ -734,7 +778,8 @@ class FlowAnalysis:
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile)
 
-    def plot_flow_memberships(self,flowDF,use_flows):
+    def plot_flow_memberships(self,use_flows,color_genes=None):
+        flowDF=self.flows
         flowScores = pl.DataFrame()
         
         for fgid in use_flows:
@@ -758,12 +803,19 @@ class FlowAnalysis:
         )
 
         flowScores_df=flowScores_df.sort("pwscore",reverse=True)
+
         fig, (ax1, ax2) = plt.subplots(1, 2)
         n=50
-        ax2.barh(range(n),flowScores_df["pwscore"][range(n)])
-        ax2.set_yticks(range(n),flowScores_df[self.symbol_column][range(n)])
-        ax2.tick_params(axis="y",labelsize=4)
-        ax2.set_title("Top 50 memberships of flow")
+        flowScores_df_top=flowScores_df[:n]
+        colormap=['blue']*n
+        if color_genes:
+            not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(color_genes))
+            print("Found "+str(n-sum(not_in_genes.to_series()))+" in "+str(n))
+            colormap=np.where(not_in_genes == True, 'red', colormap)[0]
+        ax2.barh(range(n),flowScores_df_top["pwscore"],color=colormap)
+        ax2.set_yticks(range(n),flowScores_df_top[self.symbol_column])
+        ax2.tick_params(axis="y",labelsize=3)
+        ax2.set_title("Top"+str(n)+" memberships of flow")
         ax2.invert_yaxis()
 
         flowScores_df=flowScores_df.with_column(
@@ -773,6 +825,8 @@ class FlowAnalysis:
         print(counted_scores)
         ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
         ax1.set_title("Binned membership histogram")
+        ax1.set_yscale('log')
+        fig.show()
 
     def plot_genes_membership(self,genes,use_flows=None):
         genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
@@ -793,7 +847,7 @@ class FlowAnalysis:
         ax2.barh(range(n),flowScores_df["membership"][range(n)])
         ax2.set_yticks(range(n),flowScores_df["fgid"][range(n)])
         ax2.tick_params(axis="y",labelsize=4)
-        ax2.set_title("Top 50 memberships of flow")
+        ax2.set_title("Top 50 memberships of gene(s)")
         ax2.invert_yaxis()
 
         flowScores_df=flowScores_df.with_column(
@@ -803,6 +857,7 @@ class FlowAnalysis:
         #print(counted_scores)
         ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
         ax1.set_title("Binned membership histogram")
+        fig.show()
 
     
     def _get_flow_columns(self, flowID):

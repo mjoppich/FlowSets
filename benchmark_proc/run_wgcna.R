@@ -1,5 +1,5 @@
 
-source("/mnt/input/own/projekte/pekayvaz/scripts/functions.R")
+source("functions.R")
 
 
 ## Required packages for code
@@ -105,9 +105,9 @@ MergeSimilarModules <- function(datExpr, dynamicColors, geneTree, MEDissThres = 
   
   # Plot the result
   #sizeGrWindow(7, 6)
-  plot(METree, main = "Clustering of module eigengenes",
-       xlab = "", sub = "")
-  abline(h = MEDissThres, lwd=2, col="red")
+  #plot(METree, main = "Clustering of module eigengenes",
+  #     xlab = "", sub = "")
+  #abline(h = MEDissThres, lwd=2, col="red")
   
   # Call an automatic merging function
   merge = mergeCloseModules(datExpr, dynamicColors, cutHeight = MEDissThres, verbose = 3)
@@ -116,10 +116,10 @@ MergeSimilarModules <- function(datExpr, dynamicColors, geneTree, MEDissThres = 
   # Eigengenes of the new merged modules:
   mergedMEs = merge$newMEs;
   #plot showing how merged modules exist
-  plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
-                      c("Dynamic Tree Cut", "Merged dynamic"),
-                      dendroLabels = FALSE, hang = 0.03,
-                      addGuide = TRUE, guideHang = 0.05)
+  #plotDendroAndColors(geneTree, cbind(dynamicColors, mergedColors),
+  #                    c("Dynamic Tree Cut", "Merged dynamic"),
+  #                    dendroLabels = FALSE, hang = 0.03,
+  #                    addGuide = TRUE, guideHang = 0.05)
   
   #extract merged modules
   merged_module_colors= setdiff(unique(mergedColors), "grey")
@@ -427,7 +427,7 @@ allConds = unique(obj.integrated[[performForGroups]][[performForGroups]])
 print("all conds")
 print(allConds)
 
-res.full = process_with_groups(obj.integrated, 10, paste(baseFolder, "full", sep="_"), condName=performForGroups, softPower=10, max.per.pc=100, quitAfterJackstraw=F, tpOrder=c("timepoint01", "timepoint02", "timepoint03", "timepoint04"), integrated_assay="RNA")
+res.full = process_with_groups(obj.integrated, 5, paste(baseFolder, "full", sep="_"), condName=performForGroups, softPower=10, max.per.pc=100, quitAfterJackstraw=F, tpOrder=c("timepoint01", "timepoint02", "timepoint03", "timepoint04"), integrated_assay="RNA")
 
 #for (cond in allConds)
 #{
