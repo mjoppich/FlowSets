@@ -598,6 +598,8 @@ class FlowAnalysis:
         exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, kwargs=kwargs)
 
         meanExprCol = exprData.columns.index(meancolName)
+        clusterCol = exprData.columns.index(clusterColName)
+
         if not exprcolName is None:
             exprCountCol = exprData.columns.index(exprcolName)
         else:
@@ -629,7 +631,7 @@ class FlowAnalysis:
                 print("Crisp mode, different assignment")
 
                 seriesOut = indf.select(
-                    pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
+                    pl.struct([meancolName]).apply(lambda x:
                         distribution_to_crisp(x[meancolName], exprMFs[seriesName], threshold=0.0)
                         ).alias("fuzzy.mfs")
                 )         
@@ -788,7 +790,8 @@ class FlowAnalysis:
             pl.fold(0, lambda acc, s: acc + s, pl.all().exclude("column")).alias("horizontal_sum")
         )
         order1=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in colmeans.select(['column']).to_series()]]
-        order2=[x.split('.')[2] for x in colmeans.select(['column']).to_series()] 
+        order2=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in colmeans.select(['column']).to_series()]]
+
 
         colmeans=colmeans.with_column(pl.Series(name="order1", values=order1))
         colmeans=colmeans.with_column(pl.Series(name="order2", values=order2))
@@ -808,7 +811,7 @@ class FlowAnalysis:
         # OR sort by states; switch hlines for correct white lines
         #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
         pd_filtered_flow["order1"]=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in pd_filtered_flow.index]]
-        pd_filtered_flow["order2"]=[x.split('.')[2] for x in pd_filtered_flow.index] 
+        pd_filtered_flow["order2"]=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in pd_filtered_flow.index]]
         pd_filtered_flow= pd_filtered_flow.sort_values(["order1","order2"])
         pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
         plt.figure()
@@ -910,7 +913,7 @@ class FlowAnalysis:
         flowScores_df=flowScores_df.sort("pwscore",reverse=True)
 
         fig, (ax1, ax2) = plt.subplots(1, 2)
-        n=50
+        n=30
         flowScores_df_top=flowScores_df[:n]
         colormap=['blue']*n
         if color_genes:
