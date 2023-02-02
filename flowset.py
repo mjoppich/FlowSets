@@ -380,7 +380,6 @@ def identify_threshold_level(dfWideNew, force_calculation = False, clusterColumn
                 finished = False
                 break
             
-        if finished:    
             print("Finished")
             break
 
@@ -598,7 +597,7 @@ class FlowAnalysis:
             for series in availableClusters:
                 exprMFs[series] = exprMF
             
-            exprMF.view("All MFs")
+            #exprMF.view("All MFs")
             
         else:
             
@@ -611,6 +610,8 @@ class FlowAnalysis:
                 
                 exprMFs[series] = subsetMFs
                 exprMFs.view(series)
+                plt.show()
+                plt.close()
 
         return exprMFs
 
@@ -674,11 +675,15 @@ class FlowAnalysis:
                             distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
                             ).alias("fuzzy.mfs")
                     )    
-            fuzzyOuts.append(seriesOut)    
+                               
+            fuzzyOuts.append((indf, seriesOut))
+            
+            
 
-        dfOut = pl.concat(fuzzyOuts, how="vertical")
+        allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
+        allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
-        df = pl.concat([df, dfOut], how="horizontal")           
+        df = pl.concat([allExpr, allFuzzy], how="horizontal")           
         dfWide = to_homogeneous(toWideDF(df), exprMFs)
         
         return dfWide, exprMFs
