@@ -96,4 +96,11 @@ Similar to the expression data case, we first need to prepare the differential e
 
 The combined dataframe is then ready for usage in the FlowSet framework. [The example analysis is available here.](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
 
+### Brief Method description
+
+(Differential) Expression data are read in for each gene and each cluster (or: state). The values are fuzzified either by user-defined membership classes, or equally distributed over the measurement range (min-max), or according to predefined quantiles.
+
+Relevant flows can be defined using a simple grammar with the flow_finder function, where the desired difference between two levels can be specified.
+
+For each flow, or a group of flows, gene set enrichment analysis can be performed. Here, the gene sets are binned according to their size. E.g. all gene sets with at least 2 and at most 5 genes are put together into one bin. For each bin, all flow memberships are calculated. For each membership a z-score is calculated (how different is a geneset from all other gene sets of that bin), which is transformed into a p-value for all positive-z-score (=more than expected) gene sets.
 
