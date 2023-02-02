@@ -392,6 +392,9 @@ class CustomFuzzyVar(FuzzyVariable):
             ax.set_title(title)
         fig.show()
 
+    def __str__(self) -> str:
+        return "CFuzzyVar [{}]".format("")
+
 
     def automf(self, number=5, names=None, centers=None, shape="tri"):
 
@@ -519,26 +522,17 @@ class FlowAnalysis:
             minValue = np.floor(exprData.select(pl.col(meancolName)).min())
             maxValue = np.ceil(exprData.select(pl.col(meancolName)).max())
 
-        if mfLevelsMirrored:
-            absValue = max(abs(minValue), abs(maxValue))
-            minValue = -absValue
-            maxValue = absValue
-            assert(len(mfLevels) % 2 == 1)
-        
-        if stepsize is None:
-            stepsize = min(0.1, (maxValue-minValue)/200)
-            print("Fuzzy Step Size", stepsize)
-
-        print("Creating Universe Range", minValue, "->", maxValue, "with step size", stepsize)
 
         
         if not perSeriesFuzzy:
+            
+            print(kwargs)
             
             if (not "centerMode" in kwargs and centers is None) or kwargs.get("centerMode", None) == "minmax":
                 centers = np.linspace(minValue, maxValue, len(mfLevels))
                 
                 #widths = [universe_range / ((number - 1) / 2.)] * int(number)                                
-            elif kwargs.get("centerMode", None) == "quantile":
+            elif kwargs.get("centerMode", None) == "quantile_ends":
                 
                 quantileLimits = kwargs["centerQuantiles"]
                 
@@ -549,10 +543,41 @@ class FlowAnalysis:
                 centers = [limits[0] + x for x in range(0, limitRange, limitStep)]
                 
                 print("Limit Range", limitRange)
-                print("Limit Step", limitRange)
+                print("Limit Step", limitStep)
+            elif kwargs.get("centerMode", None) == "quantiles":
                 
+                quantileLimits = kwargs["centerQuantiles"]
                 
+                values = exprData.select(pl.col(meancolName))
+                values = np.array(values)
+                
+                print(quantileLimits)
+                print(values[:10])
+                
+                limits = np.quantile(values, quantileLimits)
+                
+                if not len(limits) == len(mfLevels):
+                    raise ValueError("centerQuantiles length must be mfLevels length!")
+                
+                #minValue = limits[0]
+                #maxValue = limits[-1]
+                
+                centers = [x for x in limits]
+                                
             print("centers", centers)
+            
+            if mfLevelsMirrored:
+                absValue = max(abs(minValue), abs(maxValue))
+                minValue = -absValue
+                maxValue = absValue
+                assert(len(mfLevels) % 2 == 1)
+            
+            if stepsize is None:
+                stepsize = min(0.1, (maxValue-minValue)/200)
+                print("Fuzzy Step Size", stepsize)
+
+            print("Creating Universe Range", minValue, "->", maxValue, "with step size", stepsize)
+
 
             exprMF = CustomFuzzyVar(np.arange(minValue, maxValue, stepsize), 'exprMFs')
             exprMF.automf(len(mfLevels), names=mfLevels, centers=centers, shape=shape) 
@@ -569,7 +594,7 @@ class FlowAnalysis:
                 
                 subsetExprData = exprData.filter(pl.col(clusterColName) == series)
                 
-                subsetMFs = cls.make_fuzzy_concepts(exprData=subsetExprData, mfLevels=mfLevels, centers=centers, clusterColName=clusterColName, meancolName=meancolName, mfLevelsMirrored=mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=False)
+                subsetMFs = cls.make_fuzzy_concepts(exprData=subsetExprData, mfLevels=mfLevels, centers=centers, clusterColName=clusterColName, meancolName=meancolName, mfLevelsMirrored=mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=False, **kwargs)
                 
                 exprMFs[series] = subsetMFs
                 exprMFs.view(series)
@@ -582,7 +607,7 @@ class FlowAnalysis:
 
         exprData = indf.clone()
 
-        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, kwargs=kwargs)
+        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
 
         meanExprCol = exprData.columns.index(meancolName)
         exprCountCol = exprData.columns.index(exprcolName)
