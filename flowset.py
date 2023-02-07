@@ -450,7 +450,7 @@ class CustomFuzzyVar(FuzzyVariable):
             elif shape == "gauss":
                 unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
             elif shape == "crisp":
-                print("Crisp mode")
+                pass
             else:
                 raise ValueError("Shape not implemented" + str(shape))
 
@@ -461,8 +461,7 @@ class CustomFuzzyVar(FuzzyVariable):
                 values = fuzz.trimf(self.universe, abc)/unscaledValues
             elif shape == "gauss":
                 values = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
-            elif shape == "crisp":
-               
+            elif shape == "crisp":  
                 values= np.array( [ 1 if (x>=(center_width[0]-center_width[1]/2) and x<(center_width[0]+center_width[1]/2)) else float("nan") for x in self.universe ] )
             else:
                 raise ValueError("Shape not implemented" + str(shape))
@@ -655,6 +654,11 @@ class FlowAnalysis:
 
             if shape=="crisp":
                 print("Crisp mode, different assignment")
+      
+                # weighted mean is calculated with all (not only expressed) cells
+                indf = indf.with_columns(
+                    (pl.col(meancolName)*pl.col(exprcolName)).alias(meancolName)
+                )
 
                 seriesOut = indf.select(
                     pl.struct([meancolName]).apply(lambda x:
@@ -943,7 +947,7 @@ class FlowAnalysis:
         flowScores_df=flowScores_df.sort("pwscore",reverse=True)
 
         fig, (ax1, ax2) = plt.subplots(1, 2)
-        n=30
+        n=50
         flowScores_df_top=flowScores_df[:n]
         colormap=['blue']*n
         if color_genes:
