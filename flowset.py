@@ -239,7 +239,7 @@ class SankeyPlotter:
 def to_fuzzy(value, fzy):
 
     return np.array(
-        [fuzz.interp_membership(fzy.universe, fzy[x].mf, value) for x in fzy.terms]
+        [fuzz.interp_membership(fzy.universe, fzy[x].mf, value) for x in fzy.terms], dtype=np.float32
     )
 
 def to_crisp(value, fzy):
@@ -255,25 +255,30 @@ def distribution_to_crisp(meanValue,fzMFs, threshold=0.0):
 
 def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
 
+    #fuzzySetNoExpr = [0.0] * len(fzMFs.terms)
+    #fuzzySetNoExpr[0] = 1.0
+    fuzzySetNoExpr = to_fuzzy(0, fzMFs)
+    fuzzySet = [0.0] * len(fzMFs.terms)
+
     if sdValue is None:
-        return [x for x in to_fuzzy(meanValue, fzMFs)]
+        fuzzySet =  to_fuzzy(meanValue, fzMFs)
+        #fuzzySet = (1-exprCells) * np.array(fuzzySetNoExpr) + exprCells * fuzzySet
+        #fuzzySet[fuzzySet < threshold] = 0
         #return [list(x) for x in zip(fzMFs.terms, to_fuzzy(meanValue, fzMFs))]
 
 
-    fuzzySet = [0] * len(fzMFs.terms)
-    if np.isnan(meanValue) or np.isnan(sdValue):
-        fuzzySet[0] = 1
+    if np.isnan(meanValue) or ((not sdValue is None) and np.isnan(sdValue)):
+        fuzzySet = fuzzySetNoExpr
         #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
         return [x for x in fuzzySet]
 
-    normValues = np.random.normal(meanValue, sdValue, 100)
-    for v in normValues:
-        fuzzySet += to_fuzzy(v, fzMFs)
 
-    fuzzySet = fuzzySet / len(normValues)   
+    if not sdValue is None:
+        normValues = np.random.normal(meanValue, sdValue, 100)
+        for v in normValues:
+            fuzzySet += to_fuzzy(v, fzMFs)
 
-    fuzzySetNoExpr = [0] * len(fzMFs.terms)
-    fuzzySetNoExpr[0] = 1
+        fuzzySet = fuzzySet / len(normValues)   
 
     fuzzySet = (1-exprCells) * np.array(fuzzySetNoExpr) + exprCells * fuzzySet
     fuzzySet[fuzzySet < threshold] = 0
@@ -300,8 +305,6 @@ def to_homogeneous(df, exprMFs, is_foldchange=False):
     #print(fuzzyBins)
     #print(fuzzyValues)
 
-    print(df.head())
-
     for col in exprMFs:
         
         print(col)
@@ -314,12 +317,14 @@ def to_homogeneous(df, exprMFs, is_foldchange=False):
         else:
             #fuzzyBins = [x for x in exprMF.terms]
             fuzzyValues = [float(x) for x in to_fuzzy(0, exprMF)]
-        
+                    
         df=df.with_column( 
             pl.when(pl.col(col).is_null())
             .then( fuzzyValues )
             .otherwise(pl.col(col)).alias(col)
         )
+        
+    print(df.head())
         
     return df
 
@@ -391,6 +396,7 @@ class CustomFuzzyVar(FuzzyVariable):
 
     def __init__(self, universe, label):
         super().__init__(universe, label)
+        self.__name__ = "CustomFuzzyVar"
 
     def view(self, title=None, *args, **kwargs):
         """""" + FuzzyVariableVisualizer.view.__doc__
@@ -401,6 +407,10 @@ class CustomFuzzyVar(FuzzyVariable):
 
     def __str__(self) -> str:
         return "CFuzzyVar [{}]".format("")
+
+
+    def membership(self, value):        
+        return [fuzz.interp_membership(self.universe, self.terms[x].mf, value) for x in self.terms]
 
 
     def automf(self, number=5, names=None, centers=None, shape="tri"):
@@ -528,19 +538,21 @@ class FlowAnalysis:
         availableClusters =  set([x for x in exprData.get_column(clusterColName)])
         
         if "max.cluster" in exprData.columns:
-            minValue = np.floor(exprData.select(pl.col("max.cluster")).min())
-            maxValue = np.ceil(exprData.select(pl.col("max.cluster")).max())
+            minValue = np.floor(exprData.select(pl.col("max.cluster")).min()[0])[0][0]
+            maxValue = np.ceil(exprData.select(pl.col("max.cluster")).max()[0])[0][0]
         else:
-            minValue = np.floor(exprData.select(pl.col(meancolName)).min())
-            maxValue = np.ceil(exprData.select(pl.col(meancolName)).max())
+            minValue = np.floor(exprData.select(pl.col(meancolName)).min()[0])[0][0]
+            maxValue = np.ceil(exprData.select(pl.col(meancolName)).max()[0])[0][0]
 
 
         
         if not perSeriesFuzzy:
             
             print(kwargs)
+            print(minValue, maxValue)
             
             if (not "centerMode" in kwargs and centers is None) or kwargs.get("centerMode", None) == "minmax":
+
                 centers = np.linspace(minValue, maxValue, len(mfLevels))
                 
                 #widths = [universe_range / ((number - 1) / 2.)] * int(number)                                
@@ -632,6 +644,7 @@ class FlowAnalysis:
 
             exprData=exprData.with_column(pl.lit(1).alias("cell_expr"))
             exprCountCol = exprData.columns.index("cell_expr")
+            exprcolName ="cell_expr"
 
     
         sdExprCol=-1
@@ -670,6 +683,9 @@ class FlowAnalysis:
                     )
                 else:
                     print("No SD col name given")
+                    
+                    print(len(exprMFs[seriesName].terms))
+                    
                     seriesOut = indf.select(
                         pl.struct([meancolName, exprcolName]).apply(lambda x:
                             distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
@@ -833,24 +849,55 @@ class FlowAnalysis:
         ax.legend(title='State')
         fig.show()
         
-    def plot_state_memberships(self,genes,name):
+    def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6)):
         import seaborn as sns
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
-        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)
+        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)      
+        
         # OR sort by states; switch hlines for correct white lines
         #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
         pd_filtered_flow["order1"]=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in pd_filtered_flow.index]]
         pd_filtered_flow["order2"]=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in pd_filtered_flow.index]]
         pd_filtered_flow= pd_filtered_flow.sort_values(["order1","order2"])
         pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
-        plt.figure()
+        
+        col_order = [x for x in genes if x in pd_filtered_flow.columns]
+        pd_filtered_flow = pd_filtered_flow[col_order]
+        
+        if verbose:
+            print(pd_filtered_flow)
+        newIndex = []
+        
+        for x in pd_filtered_flow.index:
+            x = x.split(".")
+            
+            if prefix is None:
+                newIndex.append("{} {} ({}) ".format(".".join(x[1:len(x)-1]).title(), x[-1], x[0]))
+            else:
+                newIndex.append("{} {} ({}) ".format(prefix, x[-1], x[0]))
+            
+        pd_filtered_flow.index = newIndex
+                
+        plt.figure(figsize=figsize)
         sns.set(font_scale=.4)
-        ax=sns.heatmap(pd_filtered_flow)
-        ax.set(title=name)
-        ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
+        
+        g=sns.clustermap(pd_filtered_flow, row_cluster=False, col_cluster=cluster_genes, vmin=limits[0], vmax=limits[1], annot=annot, fmt=annot_fmt, cbar_pos=None, dendrogram_ratio=0.1)
+        g.fig.suptitle(name) 
+        g.ax_heatmap.yaxis.set_ticks_position("left")
+        g.ax_heatmap.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *g.ax_heatmap.get_xlim(),colors="white")
+        #ax.set(title=name)
+        #ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
 
-        return(ax)
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+
+
+        plt.show()
+        plt.close()
+        
+        return g
 
     def plot_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None):
 
@@ -888,7 +935,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
 
 
-    def visualize_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None, title=None):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, min_gene_flow=None, use_flows=None, title=None, outfile=None, score_modifier=lambda x: x):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -906,6 +953,10 @@ class FlowAnalysis:
         fgData = self.flows.filter( pl.col("gene").is_in(genes) )
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=use_flows, min_gene_flow=min_gene_flow, flowIDMod=None)#lambda x: x*(-1))
         
+        for x in fgWeightSequence:
+            x[1][-1] = score_modifier(x[1][-1])
+            
+        
         #print(fgWeightSequence)
         maxFlowValue = max([ x[1][-1] for x in fgWeightSequence])
         #print(maxFlowValue)
@@ -915,9 +966,14 @@ class FlowAnalysis:
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title)
+                       
 
-    def plot_flow_memberships(self,use_flows,color_genes=None):
-        flowDF=self.flows
+    def plot_flow_memberships(self,use_flows, n_genes=30,color_genes=None, gene_exclude_patterns=[], figsize=(8,6), outfile=None, plot_histogram=True, labelsize=3):
+        flowDF=self.flows.clone()
+        
+        for gene_exclude_pattern in gene_exclude_patterns:
+            flowDF = flowDF.filter(~pl.col("gene").str.starts_with(gene_exclude_pattern))
+        
         flowScores = pl.DataFrame()
         
         for fgid in use_flows:
@@ -934,42 +990,73 @@ class FlowAnalysis:
                 flowScores=flowScore_perGene
             else:
                 flowScores=flowScores.join(flowScore_perGene,on=self.symbol_column,how="inner")
+        
+        
         ## here also coloring bars content from flows would be possible
         flowScores_df= flowScores.select([self.symbol_column,
                         pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
                     ]       
         )
 
-        flowScores_df=flowScores_df.sort("pwscore",reverse=True)
+        flowScores_df=flowScores_df.sort(["pwscore", "gene"],reverse=True)
 
-        fig, (ax1, ax2) = plt.subplots(1, 2)
-        n=30
-        flowScores_df_top=flowScores_df[:n]
-        colormap=['blue']*n
+        if plot_histogram:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        else:
+            ax1 = None
+            fig, ax2 = plt.subplots(1, 1, figsize=figsize)
+        
+        n_genes = min(n_genes, flowScores_df.shape[0])
+
+        flowScores_df_top=flowScores_df[:n_genes]
+        colormap=['blue']*n_genes
         if color_genes:
             not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(color_genes))
-            print("Found "+str(n-sum(not_in_genes.to_series()))+" in "+str(n))
+            print("Found "+str(n_genes-sum(not_in_genes.to_series()))+" in "+str(n_genes))
             colormap=np.where(not_in_genes == True, 'red', colormap)[0]
-        ax2.barh(range(n),flowScores_df_top["pwscore"],color=colormap)
-        ax2.set_yticks(range(n),flowScores_df_top[self.symbol_column])
-        ax2.tick_params(axis="y",labelsize=3)
-        ax2.set_title("Top"+str(n)+" memberships of flow")
+            
+        ax2.set_facecolor('#FFFFFF')
+
+        
+        # Style the grid.
+        ax2.grid(which='major', color='#EBEBEB', linewidth=1.2)
+        ax2.grid(which='minor', color='#EBEBEB', linewidth=0.6)
+            
+        ax2.barh(range(n_genes),flowScores_df_top["pwscore"],color=colormap)
+        ax2.set_yticks(range(n_genes),flowScores_df_top[self.symbol_column])
+        ax2.tick_params(axis="y",labelsize=labelsize)
+        ax2.set_title("Top"+str(n_genes)+" memberships")
         ax2.invert_yaxis()
 
-        flowScores_df=flowScores_df.with_column(
-            pl.col("pwscore").round(1)
-        )
-        counted_scores=flowScores_df.select("pwscore").to_series().value_counts()
-        print(counted_scores)
-        ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
-        ax1.set_title("Binned membership histogram")
-        ax1.set_yscale('log')
-        fig.show()
+        # Only show minor gridlines once in between major gridlines.
+        from matplotlib.ticker import AutoMinorLocator
+        ax2.xaxis.set_minor_locator(AutoMinorLocator(2))
+        #ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
 
-    def plot_genes_membership(self,genes,use_flows=None):
+
+        if not ax1 is None:
+            flowScores_df=flowScores_df.with_column(
+                pl.col("pwscore").round(1)
+            )
+            counted_scores=flowScores_df.select("pwscore").to_series().value_counts()
+            print(counted_scores)
+            ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
+            ax1.set_title("Binned membership histogram")
+            ax1.set_yscale('log')
+        
+        
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+        
+        plt.show()
+        
+        return list(flowScores_df_top.select(pl.col(self.symbol_column)))[0].to_list(), flowScores_df, (ax1, ax2)
+
+    def plot_genes_membership(self,genes, n_genes=30,use_flows=None, outfile=None):
         genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
         if use_flows is None:
-                    use_flows = [x for x in self.flowid2flow]
+            use_flows = [x for x in self.flowid2flow]
 
         weightSequence = self._to_weight_sequence( flows=genes_flow, use_flows=use_flows)
 
@@ -979,13 +1066,19 @@ class FlowAnalysis:
         flowScores_df=pl.DataFrame({'fgid':fgid, 'membership':membership})
 
         flowScores_df=flowScores_df.sort("membership",reverse=True)
-        print(flowScores_df)
         fig, (ax1, ax2) = plt.subplots(1, 2)
-        n=50
-        ax2.barh(range(n),flowScores_df["membership"][range(n)])
-        ax2.set_yticks(range(n),flowScores_df["fgid"][range(n)])
+        
+        n_genes = min(n_genes, flowScores_df.shape[0])
+        
+        ax2.barh(range(n_genes),flowScores_df["membership"][range(n_genes)])
+        
+        flowIDList = list(flowScores_df["fgid"][range(n_genes)])
+               
+        ax2.set_yticks(range(n_genes),[" -> ".join([str("+".join(x)) for x in self.flowid2flow[y]]) for y in flowIDList])
+        
+        
         ax2.tick_params(axis="y",labelsize=4)
-        ax2.set_title("Top 50 memberships of gene(s)")
+        ax2.set_title("Top {} memberships".format(n_genes))
         ax2.invert_yaxis()
 
         flowScores_df=flowScores_df.with_column(
@@ -995,7 +1088,13 @@ class FlowAnalysis:
         #print(counted_scores)
         ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
         ax1.set_title("Binned membership histogram")
-        fig.show()
+        
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+        
+        plt.show()
+
 
     
     def _get_flow_columns(self, flowID):
@@ -1505,13 +1604,13 @@ class FlowAnalysis:
                                                 N=numcolors)
         return cmap
 
-    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None):
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})"):
         #https://www.programmersought.com/article/8628812000/
         
         def makeTitle(colDescr, colID, colSize, setSize):
             out = []
             for x,y,z, s in zip(colDescr, colID, colSize, setSize):
-                out.append("{} ({}, pw_cov={:.3f}/{})".format(x, y, z, s))
+                out.append(entryformat.format(x=x, sep=sep, y=y, z=z, s=s))
 
             return out
 
@@ -1576,21 +1675,27 @@ class FlowAnalysis:
 
         # Title, Label, Ticks and Ylim
         ax.set_title(title, fontdict={'size':12})
-        ax.set_xlabel('Neg. Log. Adj. p-Value')
+        ax.set_xlabel('Neg. Log. Adj. p-Value', fontdict={'size':12})
         ax.set_yticks(df.termtitle)
         ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
         
         plt.tick_params(axis='x', which="major", length=7, width=2)
         plt.tick_params(axis='x', which="minor", length=5, width=2)
         
-        ax.set_xscale('log')
+        if (0-np.log10(df["adj_pval"].min())) > 50:
+            ax.set_xscale('log')
+            
+            
         from matplotlib.ticker import ScalarFormatter
         ax.xaxis.set_major_formatter(ScalarFormatter())
         
         plt.grid(b=None)
         plt.tight_layout()
         plt.yticks(fontsize=16)
-        
+        plt.xticks(fontsize=8)
+        plt.setp(ax.get_xmajorticklabels(), fontsize=8)
+        plt.setp(ax.get_xminorticklabels(), fontsize=8)
+
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
             plt.savefig(outfile + ".pdf", bbox_inches='tight')
