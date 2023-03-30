@@ -460,7 +460,7 @@ class CustomFuzzyVar(FuzzyVariable):
             elif shape == "gauss":
                 unscaledValues += fuzz.gaussmf(self.universe, center_width[0], center_width[1])
             elif shape == "crisp":
-                print("Crisp mode")
+                pass
             else:
                 raise ValueError("Shape not implemented" + str(shape))
 
@@ -471,8 +471,7 @@ class CustomFuzzyVar(FuzzyVariable):
                 values = fuzz.trimf(self.universe, abc)/unscaledValues
             elif shape == "gauss":
                 values = fuzz.gaussmf(self.universe, center_width[0], center_width[1])/unscaledValues
-            elif shape == "crisp":
-               
+            elif shape == "crisp":  
                 values= np.array( [ 1 if (x>=(center_width[0]-center_width[1]/2) and x<(center_width[0]+center_width[1]/2)) else float("nan") for x in self.universe ] )
             else:
                 raise ValueError("Shape not implemented" + str(shape))
@@ -668,6 +667,11 @@ class FlowAnalysis:
 
             if shape=="crisp":
                 print("Crisp mode, different assignment")
+      
+                # weighted mean is calculated with all (not only expressed) cells
+                indf = indf.with_columns(
+                    (pl.col(meancolName)*pl.col(exprcolName)).alias(meancolName)
+                )
 
                 seriesOut = indf.select(
                     pl.struct([meancolName]).apply(lambda x:
@@ -849,7 +853,7 @@ class FlowAnalysis:
         ax.legend(title='State')
         fig.show()
         
-    def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6)):
+    def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
         import seaborn as sns
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
@@ -880,7 +884,7 @@ class FlowAnalysis:
         pd_filtered_flow.index = newIndex
                 
         plt.figure(figsize=figsize)
-        sns.set(font_scale=.4)
+        sns.set(font_scale=font_scale)
         
         g=sns.clustermap(pd_filtered_flow, row_cluster=False, col_cluster=cluster_genes, vmin=limits[0], vmax=limits[1], annot=annot, fmt=annot_fmt, cbar_pos=None, dendrogram_ratio=0.1)
         g.fig.suptitle(name) 
@@ -1010,6 +1014,8 @@ class FlowAnalysis:
 
         flowScores_df_top=flowScores_df[:n_genes]
         colormap=['blue']*n_genes
+
+        
         if color_genes:
             not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(color_genes))
             print("Found "+str(n_genes-sum(not_in_genes.to_series()))+" in "+str(n_genes))

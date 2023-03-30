@@ -427,7 +427,7 @@ allConds = unique(obj.integrated[[performForGroups]][[performForGroups]])
 print("all conds")
 print(allConds)
 
-res.full = process_with_groups(obj.integrated, 5, paste(baseFolder, "full", sep="_"), condName=performForGroups, softPower=10, max.per.pc=100, quitAfterJackstraw=F, tpOrder=c("timepoint01", "timepoint02", "timepoint03", "timepoint04"), integrated_assay="RNA")
+res.full = process_with_groups(obj.integrated, 10, paste(baseFolder, "full", sep="_"), condName=performForGroups, softPower=10, max.per.pc=100, quitAfterJackstraw=F, tpOrder=c("wildtype", "knockout01", "knockout02", "knockout03"), integrated_assay="RNA")
 
 #for (cond in allConds)
 #{
