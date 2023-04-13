@@ -36,7 +36,7 @@ class SankeyPlotter:
     def generate_colormap(cls, N):
         arr = np.arange(N)/N
         N_up = int(np.ceil(N/7)*7)
-        arr.resize(N_up)
+        arr.resize(N_up,refcheck=False)
         arr = arr.reshape(7,N_up//7).T.reshape(-1)
         ret = hsv(arr)
         n = ret[:,3].size
@@ -525,8 +525,25 @@ def filter_weightSequence(weightSequence,cutoff=None):
 
 def top_weightSequence(weightSequence,top=10):
     return [weightSequence[i] for i in range(top)]
+def confusion_matrix(Trues,Results,All,outfile=None):
+    Trues=set(Trues)
+    Results=set(Results)
+    All=set(All)
 
+    tp=len(Trues.intersection(Results))
+    fp=len(Results)-tp
+    tn=len(All)-len(Trues.union(Results))
+    fn=len(Trues)-tp
 
+    confusion_matrix=[[tp,fp],[fn,tn]]
+
+    if not outfile is None:
+        L=pd.DataFrame(confusion_matrix)
+        L.index=[1,0]
+        L.columns=[1,0]
+        pd.DataFrame(L).to_csv(outfile)
+    
+    return(confusion_matrix)
 
 class FlowAnalysis:
 
@@ -544,7 +561,8 @@ class FlowAnalysis:
             maxValue = np.ceil(exprData.select(pl.col(meancolName)).max()[0])[0][0]
 
 
-        
+        minValue=minValue-1
+        maxValue=maxValue+1
         if not perSeriesFuzzy:
             
             print(kwargs)
@@ -903,7 +921,7 @@ class FlowAnalysis:
         
         return g
 
-    def plot_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None):
+    def plot_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None, transformCounts=lambda x: np.sqrt(x)):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -914,10 +932,10 @@ class FlowAnalysis:
         weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=use_flows)
         weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=lambda x: x, fsize=figsize, outfile=outfile)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
 
 
-    def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None):
+    def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts=lambda x: np.sqrt(x)):
 
         if not isinstance(genes, (tuple, list)):
             genes = [genes]
@@ -926,17 +944,19 @@ class FlowAnalysis:
         bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
         bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None, min_gene_flow=min_gene_flow)
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)
-        
+        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
+
         survivedFlows = [x[0] for x in bgWeightSequence]
         
         fgData = self.flows.filter( pl.col("gene").is_in(genes) )
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, min_gene_flow=min_gene_flow, flowIDMod=lambda x: x*(-1))
         
         fgWeightSequence = [x for x in fgWeightSequence if x[0]*(-1) in survivedFlows]
+        fgWeightSequence = filter_weightSequence(fgWeightSequence, min_flow)          
 
         specialColors = {x[0]: "red" for x in fgWeightSequence}
         
-        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, outfile=outfile)
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
 
 
     def visualize_genes(self, genes, figsize=None, min_flow=None, min_gene_flow=None, use_flows=None, title=None, outfile=None, score_modifier=lambda x: x):
@@ -1017,7 +1037,7 @@ class FlowAnalysis:
 
         
         if color_genes:
-            not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(color_genes))
+            not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(list(color_genes)))
             print("Found "+str(n_genes-sum(not_in_genes.to_series()))+" in "+str(n_genes))
             colormap=np.where(not_in_genes == True, 'red', colormap)[0]
             
@@ -1041,10 +1061,10 @@ class FlowAnalysis:
 
 
         if not ax1 is None:
-            flowScores_df=flowScores_df.with_column(
+            flowScores_df_rounded=flowScores_df.with_column(
                 pl.col("pwscore").round(1)
             )
-            counted_scores=flowScores_df.select("pwscore").to_series().value_counts()
+            counted_scores=flowScores_df_rounded.select("pwscore").to_series().value_counts()
             print(counted_scores)
             ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
             ax1.set_title("Binned membership histogram")
@@ -1059,7 +1079,19 @@ class FlowAnalysis:
         
         return list(flowScores_df_top.select(pl.col(self.symbol_column)))[0].to_list(), flowScores_df, (ax1, ax2)
 
-    def plot_genes_membership(self,genes, n_genes=30,use_flows=None, outfile=None):
+    def get_confusion_matrix(self,scores_df,Trues,num_true=None,outfile=None):
+        if not num_true is None:
+            scores_df=scores_df[:num_true]
+        scores_df=scores_df.filter(pl.col("pwscore")>0.0)
+
+        Results=list(scores_df.select(pl.col(self.symbol_column)))[0].to_list()
+        All=list(self.flows.select(pl.col(self.symbol_column)))[0].to_list()
+        cm=confusion_matrix(Trues,Results,All,outfile)
+
+
+        print(cm)
+
+    def plot_genes_membership(self,genes, n_genes=30,use_flows=None,plot_hist=False, outfile=None):
         genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
@@ -1090,10 +1122,14 @@ class FlowAnalysis:
         flowScores_df=flowScores_df.with_column(
             pl.col("membership").round(1)
         )
-        counted_scores=flowScores_df.select("membership").to_series().value_counts()
-        #print(counted_scores)
-        ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
-        ax1.set_title("Binned membership histogram")
+        if plot_hist:
+            counted_scores=flowScores_df.select("membership").to_series().value_counts()
+            #print(counted_scores)
+            ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
+            ax1.set_title("Binned membership histogram")
+        else:
+            ax1.axis('off')
+
         
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
