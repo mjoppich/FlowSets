@@ -853,7 +853,7 @@ class FlowAnalysis:
         ax.legend(title='State')
         fig.show()
         
-    def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
+    def plot_state_memberships(self,genes, name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
         import seaborn as sns
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
@@ -886,17 +886,19 @@ class FlowAnalysis:
         plt.figure(figsize=figsize)
         sns.set(font_scale=font_scale)
         
+        pd_filtered_flow = pd_filtered_flow.iloc[::-1]
+        
         g=sns.clustermap(pd_filtered_flow, row_cluster=False, col_cluster=cluster_genes, vmin=limits[0], vmax=limits[1], annot=annot, fmt=annot_fmt, cbar_pos=None, dendrogram_ratio=0.1)
+        
+        g.ax_col_dendrogram.set_visible(False)
+        
         g.fig.suptitle(name) 
         g.ax_heatmap.yaxis.set_ticks_position("left")
         g.ax_heatmap.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *g.ax_heatmap.get_xlim(),colors="white")
-        #ax.set(title=name)
-        #ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
 
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
             plt.savefig(outfile + ".pdf", bbox_inches='tight')
-
 
         plt.show()
         plt.close()
@@ -1410,7 +1412,7 @@ class FlowAnalysis:
     def _calculate_pvalues(self, df, set_size_threshold=None):
         
         if set_size_threshold is None:
-            set_size_threshold = [ 1, 5, 10, 50, 100]
+            set_size_threshold = [ 2, 10, 50, 100]
         
         inDF = df.copy()
         
