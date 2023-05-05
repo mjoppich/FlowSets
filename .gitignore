@@ -137,4 +137,4 @@ dmypy.json
 **/.DS_Stores
 
 
-benchmark_proc
+benchmark_proc/wgcna
