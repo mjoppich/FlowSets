@@ -19,6 +19,7 @@ from scipy.special import expit
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.cm import ScalarMappable, hsv, get_cmap
+import seaborn as sns
 
 import polars as pl
 
@@ -851,7 +852,6 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
 
     def hist_level_membershipsum(self):
-        import seaborn as sns
 
         flowDF=self.flows
         colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_column(
@@ -872,7 +872,6 @@ class FlowAnalysis:
         fig.show()
         
     def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
-        import seaborn as sns
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
         pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)      
@@ -992,7 +991,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title)
                        
 
-    def plot_flow_memberships(self,use_flows, n_genes=30,color_genes=None, gene_exclude_patterns=[], figsize=(8,6), outfile=None, plot_histogram=True, labelsize=3):
+    def plot_flow_memberships(self,use_flows, n_genes=30,color_genes=None, gene_exclude_patterns=[], figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
         flowDF=self.flows.clone()
         
         for gene_exclude_pattern in gene_exclude_patterns:
@@ -1025,38 +1024,41 @@ class FlowAnalysis:
         flowScores_df=flowScores_df.sort(["pwscore", "gene"],reverse=True)
 
         if plot_histogram:
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [4, 1]}, sharex=True)
         else:
             ax1 = None
-            fig, ax2 = plt.subplots(1, 1, figsize=figsize)
+            fig, ax1 = plt.subplots(1, 1, figsize=figsize)
         
         n_genes = min(n_genes, flowScores_df.shape[0])
 
         flowScores_df_top=flowScores_df[:n_genes]
         colormap=['blue']*n_genes
 
-        
+         
         if color_genes:
             not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(list(color_genes)))
             print("Found "+str(n_genes-sum(not_in_genes.to_series()))+" in "+str(n_genes))
             colormap=np.where(not_in_genes == True, 'red', colormap)[0]
             
-        ax2.set_facecolor('#FFFFFF')
+        ax1.set_facecolor('#FFFFFF')
 
         
         # Style the grid.
-        ax2.grid(which='major', color='#EBEBEB', linewidth=1.2)
-        ax2.grid(which='minor', color='#EBEBEB', linewidth=0.6)
+        ax1.grid(which='major', color='#EBEBEB', linewidth=1.2)
+        ax1.grid(which='minor', color='#EBEBEB', linewidth=0.6)
             
-        ax2.barh(range(n_genes),flowScores_df_top["pwscore"],color=colormap)
-        ax2.set_yticks(range(n_genes),flowScores_df_top[self.symbol_column])
-        ax2.tick_params(axis="y",labelsize=labelsize)
-        ax2.set_title("Top"+str(n_genes)+" memberships")
-        ax2.invert_yaxis()
+        #ax1.barh(range(n_genes),flowScores_df_top["pwscore"],color=colormap)
+
+        ax1.hlines(y=range(n_genes), xmin = 0 , xmax = flowScores_df_top["pwscore"], color=colormap)
+        ax1.plot(flowScores_df_top["pwscore"], range(n_genes), "o")
+        ax1.set_yticks(range(n_genes),flowScores_df_top[self.symbol_column])
+        ax1.tick_params(axis="y",labelsize=labelsize)
+        ax1.set_title("Top "+str(n_genes)+" memberships",fontsize = labelsize)
+        ax1.invert_yaxis()
 
         # Only show minor gridlines once in between major gridlines.
         from matplotlib.ticker import AutoMinorLocator
-        ax2.xaxis.set_minor_locator(AutoMinorLocator(2))
+        ax1.xaxis.set_minor_locator(AutoMinorLocator(2))
         #ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
 
 
@@ -1065,11 +1067,29 @@ class FlowAnalysis:
                 pl.col("pwscore").round(1)
             )
             counted_scores=flowScores_df_rounded.select("pwscore").to_series().value_counts()
-            print(counted_scores)
-            ax1.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
-            ax1.set_title("Binned membership histogram")
-            ax1.set_yscale('log')
-        
+
+            if violin:
+                sns.set_style('whitegrid')
+                #sns.kdeplot(x=np.array(flowScores_df["pwscore"]),ax=ax2)
+                sns.violinplot(x=np.array(flowScores_df["pwscore"]),ax=ax2,inner="stick")
+                ax2.set_title("Flow membership distribution")
+                ax2.set_xlim(0,1)
+            else:
+                bars=ax2.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
+                for rect in bars:
+                    real_height=rect.get_height()
+                    ax2.text(rect.get_x() + rect.get_width()/2., (real_height*.01).clip(min=2.5),
+                            '%d' % int(real_height),c='w',
+                            ha='center', va='bottom',rotation=90)
+                ax2.set_title("Binned membership histogram",fontsize = labelsize)
+                ax2.set_yscale('log')
+                ax2.set_facecolor('white')
+                ax2.grid(which='major', color='#EBEBEB', linewidth=1)
+                ax2.grid(which='minor', color='#EBEBEB', linewidth=1)
+                ax2.tick_params(axis="both",labelsize=labelsize)
+                ax2.axis(ymin=1)
+
+        fig.tight_layout()
         
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
