@@ -291,14 +291,14 @@ def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
     #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
     return outset
 
-def toWideDF( df ):
+def toWideDF( df,symbol_column ):
     #dfPivot = pd.pivot(indf, index=["gene"], columns=["cluster"], values=["fuzzy_set"])
     #dfWide = dfPivot.copy()
     #dfWide.columns = dfWide.columns.droplevel(0)
     #dfWide.reset_index(inplace=True)
     #dfWide.reset_index(drop=True, inplace=True)
     
-    dfPivot = df.pivot(values=["fuzzy.mfs"], index="gene", columns="cluster")
+    dfPivot = df.pivot(values=["fuzzy.mfs"], index=symbol_column, columns="cluster")
     return dfPivot
 
 def to_homogeneous(df, exprMFs, is_foldchange=False):
@@ -647,7 +647,7 @@ class FlowAnalysis:
 
 
     @classmethod
-    def fuzzify_exprvalues(cls, indf:pl.internals.dataframe.frame.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,  meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None, **kwargs):
+    def fuzzify_exprvalues(cls, indf:pl.internals.dataframe.frame.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None, **kwargs):
 
         exprData = indf.clone()
 
@@ -723,7 +723,7 @@ class FlowAnalysis:
         allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
         df = pl.concat([allExpr, allFuzzy], how="horizontal")           
-        dfWide = to_homogeneous(toWideDF(df), exprMFs)
+        dfWide = to_homogeneous(toWideDF(df,symbol_column), exprMFs)
         
         return dfWide, exprMFs
 
