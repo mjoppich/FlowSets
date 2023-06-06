@@ -926,7 +926,7 @@ class FlowAnalysis:
             genes = [genes]
 
         #useFlows = self.flows.filter( self.flows["gene"].to_pandas().isin(genes).tolist())
-        useFlows = self.flows.filter(pl.col("gene").is_in(genes) )
+        useFlows = self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
         weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=use_flows)
         weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
@@ -940,14 +940,14 @@ class FlowAnalysis:
             genes = [genes]
             
             
-        bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
+        bgData = self.flows.filter( ~pl.col(self.symbol_column).is_in(genes) )
         bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None, min_gene_flow=min_gene_flow)
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
 
         survivedFlows = [x[0] for x in bgWeightSequence]
         
-        fgData = self.flows.filter( pl.col("gene").is_in(genes) )
+        fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, min_gene_flow=min_gene_flow, flowIDMod=lambda x: x*(-1))
         
         fgWeightSequence = [x for x in fgWeightSequence if x[0]*(-1) in survivedFlows]
@@ -973,7 +973,7 @@ class FlowAnalysis:
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
 
         
-        fgData = self.flows.filter( pl.col("gene").is_in(genes) )
+        fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=use_flows, min_gene_flow=min_gene_flow, flowIDMod=None)#lambda x: x*(-1))
         
         for x in fgWeightSequence:
@@ -995,7 +995,7 @@ class FlowAnalysis:
         flowDF=self.flows.clone()
         
         for gene_exclude_pattern in gene_exclude_patterns:
-            flowDF = flowDF.filter(~pl.col("gene").str.starts_with(gene_exclude_pattern))
+            flowDF = flowDF.filter(~pl.col(self.symbol_column).str.starts_with(gene_exclude_pattern))
         
         flowScores = pl.DataFrame()
         
@@ -1021,7 +1021,7 @@ class FlowAnalysis:
                     ]       
         )
 
-        flowScores_df=flowScores_df.sort(["pwscore", "gene"],reverse=True)
+        flowScores_df=flowScores_df.sort(["pwscore",self.symbol_column],reverse=True)
 
         if plot_histogram:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [4, 1]}, sharex=True)
@@ -1523,7 +1523,7 @@ class FlowAnalysis:
             for gene in pwGenes:
                 allPathwayGenes.add(gene)
 
-        allPathwayGenes = list(allPathwayGenes.intersection(list(bgFlowDF.select(pl.col("gene")).to_series())))
+        allPathwayGenes = list(allPathwayGenes.intersection(list(bgFlowDF.select(pl.col(self.symbol_column)).to_series())))
         
         #print("Pathway Genes", len(allPathwayGenes))
         #print("Measured Pathways Genes", len(allPathwayGenes))
