@@ -969,13 +969,9 @@ class FlowAnalysis:
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
             
-            
-        #bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
-        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
-        
+        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)       
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
-
-        
+       
         fgData = self.flows.filter( pl.col("gene").is_in(genes) )
         fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=use_flows, min_gene_flow=min_gene_flow, flowIDMod=None)#lambda x: x*(-1))
         
