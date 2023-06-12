@@ -1,6 +1,6 @@
-# FlowSet
+# FlowSets
 
-## FlowSet: an integrative approach to analyse discrete-series data using fuzzy concepts
+## FlowSets: an integrative approach to analyse discrete-series data using fuzzy concepts
 
 ---
 ![GitHub top language](https://img.shields.io/github/languages/top/mjoppich/FlowSets)
@@ -12,6 +12,7 @@
 
 [Markus Joppich](https://ibio.dev/) [![GitHub followers](https://img.shields.io/github/followers/mjoppich?style=social)](https://github.com/mjoppich) [![Twitter Follow](https://img.shields.io/twitter/follow/mjoppich?style=social&logo=twitter)](https://twitter.com/intent/follow?screen_name=mjoppich)
 
+*FlowSets will be presented at ISMB/ECCB 2023 in the BioVis-Track!*
 
 ---
 
@@ -94,7 +95,7 @@ Similar to the expression data case, we first need to prepare the differential e
     makeCombinedDF(tpDeList, paste("./de_comparison_", celltype, sep=""))
 
 
-The combined dataframe is then ready for usage in the FlowSet framework. [The example analysis is available here.](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
+The combined dataframe is then ready for usage in the FlowSets framework. [The example analysis is available here.](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
 
 ### Brief Method description
 
