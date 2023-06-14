@@ -627,7 +627,7 @@ class FlowAnalysis:
             for series in availableClusters:
                 exprMFs[series] = exprMF
             
-            #exprMF.view("All MFs")
+            exprMF.view("All MFs")
             
         else:
             
@@ -647,12 +647,11 @@ class FlowAnalysis:
 
 
     @classmethod
-    def fuzzify_exprvalues(cls, indf:pl.internals.dataframe.frame.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None, **kwargs):
+    def fuzzify_exprvalues(cls, indf:pl.internals.dataframe.frame.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, **kwargs):
 
         exprData = indf.clone()
 
         exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
-
         meanExprCol = exprData.columns.index(meancolName)
         clusterCol = exprData.columns.index(clusterColName)
 
@@ -675,6 +674,8 @@ class FlowAnalysis:
         print("Expr Count", exprcolName, "col", exprCountCol)
         print("SD", sdcolName, "col", sdExprCol)
         print("Cluster", clusterColName, "col", clusterCol)
+        print("Combining over state: " ,combineOverState)
+
 
         df = exprData.clone()
                 
@@ -704,21 +705,64 @@ class FlowAnalysis:
                             distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0)
                             ).alias("fuzzy.mfs")
                     )
-                else:
-                    print("No SD col name given")
-                    
-                    print(len(exprMFs[seriesName].terms))
+                else:                    
+                    #print(len(exprMFs[seriesName].terms))
                     
                     seriesOut = indf.select(
                         pl.struct([meancolName, exprcolName]).apply(lambda x:
                             distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
                             ).alias("fuzzy.mfs")
                     )    
-                               
+            if combineOverState == True:
+                #Here values are combined for each symbol_col + cluster entry
+                seriesOut_wide=(
+                    seriesOut
+                    .with_row_count('id')
+                    .explode("fuzzy.mfs")
+                    .with_column(
+                        ("FV_" + pl.arange(0, pl.count()).cast(pl.Utf8).str.zfill(2))
+                        .over("id")
+                        .alias("col_nm")
+                    )
+                    .pivot(
+                        index=['id'],
+                        values="fuzzy.mfs",
+                        columns='col_nm',
+                    )
+                )
+
+                new_indf = indf.hstack(seriesOut_wide)
+
+                FV_columns=list(filter(lambda x:'FV_' in x, new_indf.columns))
+                new_indf=new_indf.groupby(["gene_id",clusterColName]).agg([
+                    pl.col(FV_columns).mean()
+                ])
+
+
+                new_indf=(new_indf
+                .melt(
+                    id_vars = ["gene_id","cluster"], 
+                    variable_name = 'FV',
+                    value_name="fuzzy.mfs"
+                    )
+                )
+
+                new_indf=new_indf.groupby(["gene_id",clusterColName]).agg(pl.col("fuzzy.mfs"))
+
+                seriesOut=new_indf.select(pl.col('fuzzy.mfs'))
+                if sdcolName is None:
+                    indf=indf.groupby([symbol_column,clusterColName]).agg([
+                        pl.col(meancolName),
+                        pl.col(exprcolName)
+                        ])
+                else:
+                    indf=indf.groupby([symbol_column,clusterColName]).agg([
+                        pl.col(meancolName),
+                        pl.col(sdcolName),
+                        pl.col(exprcolName)
+                        ])                   
             fuzzyOuts.append((indf, seriesOut))
             
-            
-
         allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
         allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
@@ -807,14 +851,13 @@ class FlowAnalysis:
     @property
     def flowid2flow(self):
         
-        if self._flowid2flow is None:
+        if not hasattr(self,"_flowid2flow"):
             print("Creating FlowIDs")
             self._flowid2flow = {}
             for comb in list(itertools.product(self.levelOrder, repeat=len(self.series2name))):
-                
+                    
                 largeComp = [x for x in zip(self.series2name, comb)]           
-                self._flowid2flow[len(self.flowid2flow)] = largeComp
-
+                self._flowid2flow[len(self._flowid2flow)] = largeComp
         return self._flowid2flow
 
     def prepare_flows(self, flowDF=None):
@@ -853,6 +896,63 @@ class FlowAnalysis:
                 print(x)
 
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
+
+
+    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="Spectral"):
+        
+        
+        if genes is None:
+            flowDF=self.flows
+        else:
+            flowDF=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
+
+        Cflowid2flow = {}
+        for comb in list(itertools.product(reversed(self.levelOrder), repeat=2)):
+
+            for i in range(len(self.series2name.keys()) - 1):
+
+                series=list(self.series2name.keys())
+                largeComp = [x for x in zip([series[i],series[i+1]], comb)]          
+                Cflowid2flow[len(Cflowid2flow)] = largeComp
+        
+        if use_flows is None:
+            use_flows = [x for x in Cflowid2flow]
+        weightSequence = []
+
+        for fgid in Cflowid2flow:
+
+            if not fgid in use_flows:
+                continue
+
+            flowCols=["{}.cluster.{}".format(fclass, state) for state, fclass  in Cflowid2flow[fgid] ]
+            flowScoreDF = flowDF.select(
+                    pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                    )
+            flowScore = flowScoreDF.sum()[0,0]
+
+
+            if not transformCounts is None:
+                fgid = transformCounts(fgid)
+
+            outlist = list(Cflowid2flow[fgid])
+            outlist.append(flowScore )
+            weightSequence.append(
+                        (fgid, outlist)
+                    )
+        weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
+
+        if specialColors is None:
+            indices=[w[0] for w in weightSequence ]
+            colours=sns.color_palette(sns_palette,len(self.levelOrder))
+            c = [colours[j] for j in range(len(self.levelOrder)) for i in range(len(self.levelOrder)*(len(self.seriesOrder)-1))]
+
+      
+            specialcolormap=pd.DataFrame({
+                'values':c},
+                index=indices).to_dict()['values']
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder,specialColors=specialcolormap)
+
+
 
     def hist_level_membershipsum(self):
 
@@ -915,10 +1015,13 @@ class FlowAnalysis:
         g.fig.suptitle(name) 
         g.ax_heatmap.yaxis.set_ticks_position("left")
         g.ax_heatmap.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *g.ax_heatmap.get_xlim(),colors="white")
+        #ax.set(title=name)
+        #ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
 
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
             plt.savefig(outfile + ".pdf", bbox_inches='tight')
+
 
         plt.show()
         plt.close()
@@ -971,7 +1074,10 @@ class FlowAnalysis:
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
             
-        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)       
+            
+        #bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
+        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
+        
         bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
 
         
@@ -1183,14 +1289,12 @@ class FlowAnalysis:
             list: weight-sequence
         """
         
+
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
         
         weightSequence = []
-        for fgid in self.flowid2flow:
-            if not fgid in use_flows:
-                continue
-            
+        for fgid in use_flows:            
             # (fgid, [(("WT", 2), ("KO", 0), 1), .... )]
             flowScore, flow = self._calculate_flow_score(flows, fgid, min_gene_flow=min_gene_flow)
             
