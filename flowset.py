@@ -714,6 +714,7 @@ class FlowAnalysis:
                             ).alias("fuzzy.mfs")
                     )    
             if combineOverState == True:
+                
                 #Here values are combined for each symbol_col + cluster entry
                 seriesOut_wide=(
                     seriesOut
@@ -732,35 +733,36 @@ class FlowAnalysis:
                 )
 
                 new_indf = indf.hstack(seriesOut_wide)
+                                
 
                 FV_columns=list(filter(lambda x:'FV_' in x, new_indf.columns))
-                new_indf=new_indf.groupby(["gene_id",clusterColName]).agg([
+                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
                     pl.col(FV_columns).mean()
                 ])
 
 
                 new_indf=(new_indf
                 .melt(
-                    id_vars = ["gene_id","cluster"], 
+                    id_vars = [symbol_column,clusterColName], 
                     variable_name = 'FV',
                     value_name="fuzzy.mfs"
                     )
                 )
 
-                new_indf=new_indf.groupby(["gene_id",clusterColName]).agg(pl.col("fuzzy.mfs"))
+                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
 
                 seriesOut=new_indf.select(pl.col('fuzzy.mfs'))
                 if sdcolName is None:
-                    indf=indf.groupby([symbol_column,clusterColName]).agg([
+                    indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(exprcolName)
                         ])
                 else:
-                    indf=indf.groupby([symbol_column,clusterColName]).agg([
+                    indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(sdcolName),
                         pl.col(exprcolName)
-                        ])                   
+                        ])      
             fuzzyOuts.append((indf, seriesOut))
             
         allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
@@ -939,18 +941,20 @@ class FlowAnalysis:
             weightSequence.append(
                         (fgid, outlist)
                     )
-        weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
 
         if specialColors is None:
             indices=[w[0] for w in weightSequence ]
             colours=sns.color_palette(sns_palette,len(self.levelOrder))
-            c = [colours[j] for j in range(len(self.levelOrder)) for i in range(len(self.levelOrder)*(len(self.seriesOrder)-1))]
+            c = [colours[j] for j in range(len(self.levelOrder)) for i in range(int(len(indices)/len(self.levelOrder)))]
 
       
-            specialcolormap=pd.DataFrame({
+            specialColors=pd.DataFrame({
                 'values':c},
                 index=indices).to_dict()['values']
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder,specialColors=specialcolormap)
+        weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
+        new_indices=[w[0] for w in weightSequence ]
+        specialColors={k: v for k, v in specialColors.items() if k in new_indices}
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder,specialColors=specialColors)
 
 
 
