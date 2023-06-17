@@ -1,6 +1,6 @@
 # FlowSets
 
-## FlowSets: an integrative approach to analyse discrete-series data using fuzzy concepts
+## Visualizing (differential) expression patterns with fuzzy concepts as FlowSets
 
 ---
 ![GitHub top language](https://img.shields.io/github/languages/top/mjoppich/FlowSets)
@@ -105,3 +105,4 @@ Relevant flows can be defined using a simple grammar with the flow_finder functi
 
 For each flow, or a group of flows, gene set enrichment analysis can be performed. Here, the gene sets are binned according to their size. E.g. all gene sets with at least 2 and at most 5 genes are put together into one bin. For each bin, all flow memberships are calculated. For each membership a z-score is calculated (how different is a geneset from all other gene sets of that bin), which is transformed into a p-value for all positive-z-score (=more than expected) gene sets.
 
+A more detailed description is available in the [working copy of our manuscript article](https://github.com/mjoppich/FlowSets/blob/main/examples/WorkingVersionFlowsets.pdf).
