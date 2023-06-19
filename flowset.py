@@ -1138,9 +1138,9 @@ class FlowAnalysis:
         if plot_histogram:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [4, 1]}, sharex=True)
         else:
-            ax1 = None
             fig, ax1 = plt.subplots(1, 1, figsize=figsize)
-        
+            ax2 = None
+
         n_genes = min(n_genes, flowScores_df.shape[0])
 
         flowScores_df_top=flowScores_df[:n_genes]
@@ -1162,7 +1162,7 @@ class FlowAnalysis:
         #ax1.barh(range(n_genes),flowScores_df_top["pwscore"],color=colormap)
 
         ax1.hlines(y=range(n_genes), xmin = 0 , xmax = flowScores_df_top["pwscore"], color=colormap)
-        ax1.plot(flowScores_df_top["pwscore"], range(n_genes), "o")
+        ax1.plot(list(flowScores_df_top["pwscore"]), range(n_genes), "o")
         ax1.set_yticks(range(n_genes),flowScores_df_top[self.symbol_column])
         ax1.tick_params(axis="y",labelsize=labelsize)
         ax1.set_title("Top "+str(n_genes)+" memberships",fontsize = labelsize)
@@ -1174,7 +1174,7 @@ class FlowAnalysis:
         #ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
 
 
-        if not ax1 is None:
+        if not ax2 is None:
             flowScores_df_rounded=flowScores_df.with_column(
                 pl.col("pwscore").round(1)
             )
