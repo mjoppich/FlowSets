@@ -20,6 +20,10 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib.cm import ScalarMappable, hsv, get_cmap
 import seaborn as sns
+import matplotlib.patches as patches
+import matplotlib.colors as mcolors
+
+import colorsys
 
 import polars as pl
 
@@ -115,20 +119,33 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None):
+
+        
+        levelHeight=2
+
+        maxNumLevels = max([len(levelOrder[x]) for x in levelOrder])
+        maxLevelPos = (maxNumLevels-1)*levelHeight
 
         nodePositions = {}
-
         for nodeName in series2name:
-            for nli, nodeLevel in enumerate(levelOrder):
+            
+            numLevelsInState = len(levelOrder[nodeName])
+            
+            stateHeight = (numLevelsInState-1)*levelHeight
+            levelOffset = 0.5*(maxLevelPos-stateHeight)                        
+            
+            for nli, nodeLevel in enumerate(levelOrder[nodeName]):
+                nodePositions[ (nodeName, nodeLevel) ] = (seriesOrder.index(nodeName), levelOffset+ (levelHeight*nli))
 
-                nodePositions[ (nodeName, nodeLevel) ] = (seriesOrder.index(nodeName), 2*nli)
-
-        minYValue = min([nodePositions[x][1] for x in nodePositions])
-        maxYValue = max([nodePositions[x][1] for x in nodePositions])
+        if verbose:
+            for x in nodePositions:
+                print(x, nodePositions[x])
 
         minXValue = min([nodePositions[x][0] for x in nodePositions])
         maxXValue = max([nodePositions[x][0] for x in nodePositions])
+        minYValue = min([nodePositions[x][1] for x in nodePositions])
+        maxYValue = max([nodePositions[x][1] for x in nodePositions])
 
         #nodeWeigthSequence = [ (("WT", 2), ("KO", 0), 1), (("WT", 2), ("KO", -2), 1), (("WT", -1), ("KO", -2), 1) ]
         nodeOffsets = defaultdict(lambda: 0)
@@ -146,12 +163,25 @@ class SankeyPlotter:
                 maxFlowPerNode[node] += weight
 
         maxFlowInAllNodes = max([x for x in maxFlowPerNode.values()])
+        if verbose:
+            print("Max Flow Per Node")
+            for node in maxFlowPerNode:
+                print(node, maxFlowPerNode[node])
 
+
+        #reorder nodeWeigthSequence such that paths are ordered
+        nodeWeigthSequence = sorted(nodeWeigthSequence, key=lambda x: [nodePositions[ne][1] for ne in x[1][0:-1]], reverse=True)
+
+        # close any maybe still open plot
         plt.close()
+        
         if fsize is None:
             fsize = (4 * len(seriesOrder), 2*(len(levelOrder)+1))
 
-        print("Figure Size", fsize)
+        if verbose:
+            print("Figure Size", fsize)
+            
+        #create new figuer
         fig, ax = plt.subplots(figsize=fsize)
         ax.axis('off')
         plt.title("")
@@ -159,9 +189,14 @@ class SankeyPlotter:
         for si, fIDWeights in enumerate(nodeWeigthSequence):
 
             fid, nws = fIDWeights
-
+            
             weight = transformCounts(nws[-1]) / maxFlowInAllNodes
             nodes = nws[0:-1]
+            
+            if weight == 0:
+                if verbose:
+                    print("Skipping flow", fid, "for zero weight")
+                continue
 
             for i in range(1, len(nodes)):
 
@@ -170,12 +205,13 @@ class SankeyPlotter:
 
                 p1 = nodePositions[src]
                 p2 = nodePositions[tgt]
+                
+                p1 = p1[0], p1[1] - nodeOffsets[src] + (maxFlowPerNode[src]/maxFlowInAllNodes)/2.0
+                p2 = p2[0], p2[1] - nodeOffsets[tgt] + (maxFlowPerNode[tgt]/maxFlowInAllNodes)/2.0
 
-                p1 = p1[0], p1[1] - nodeOffsets[src] + maxFlowPerNode[src]/maxFlowInAllNodes/2.0
-                p2 = p2[0], p2[1] - nodeOffsets[tgt] + maxFlowPerNode[tgt]/maxFlowInAllNodes/2.0
-
-                if tgt == ("KO", 0):
-                    print(p2)
+                #left/right displacement so paths appear to hit outer box area
+                p1 = (p1[0]+0.1, p1[1])
+                p2 = (p2[0]-0.1, p2[1])
 
                 xs, ys1, ys2 = cls.sigmoid_arc(p1, weight, p2, resolution=0.1, smooth=0, ax=ax)
 
@@ -191,26 +227,65 @@ class SankeyPlotter:
                         c = "grey"                    
                 else:
                     c = colours[si % len(colours)]
-                plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=0.5, color=c, axes=ax)
+                plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=0.5, color=c, axes=ax, linewidth=linewidth)
 
 
 
-        props = dict(boxstyle='round', facecolor='lightgrey', alpha=1.0, pad=1)
+
 
         for npi, nn in enumerate(nodePositions):
 
             nodeStr = "{lvl}".format(cond=series2name[nn[0]], lvl=nn[1])
             nodePosition = nodePositions[nn]
+                                    
+            if not seriesColorMap is None:
+                nodeColor = seriesColorMap[ series2name[nn[0]] ]( nodePosition[1]/(levelHeight*(maxNumLevels-1)) )[:3]
+            else:
+                nodeColor = mcolors.to_rgb("lightgrey")
+            
+            
+            rect = patches.FancyBboxPatch( (nodePosition[0]-0.1, nodePosition[1]-0.75), width=0.2, height=1.5, facecolor=nodeColor,linewidth=0)
+            rect.set_boxstyle("round", rounding_size=0.1, pad=0)
+            ax.add_patch(rect)
+            
+            
+            if cls.get_color_is_bright(nodeColor):
+                patchColor = cls.scale_lightness(nodeColor, 0.75)
+            else:
+                patchColor = cls.scale_lightness(nodeColor, 1.25)
+            
+            rect = patches.Rectangle( (nodePosition[0]-0.1, nodePosition[1]-0.5), width=0.2, height=1, linewidth=0, facecolor=patchColor )
+            ax.add_patch(rect)
 
-            ax.text(nodePosition[0], nodePosition[1], nodeStr, transform=ax.transData, fontsize=14,rotation=90,
-                verticalalignment='center', ha='center', va='center', bbox=props)
+            textColor = cls.get_text_color_based_on_background_color(nodeColor, "#FFFFFF", "#000000")
+            
+
+            t = ax.text(nodePosition[0], nodePosition[1], nodeStr, transform=ax.transData, fontsize=14,rotation=90,
+                verticalalignment='center', ha='center', va='center', bbox=None, color=textColor)
+            
 
         # place a text box in upper left in axes coords
 
         for si, series in enumerate(series2name):
+            props = dict(boxstyle='round', facecolor="lightgrey", alpha=1.0, pad=0.5)
 
-            ax.text(si, minYValue-1, series2name[series], transform=ax.transData, fontsize=14,rotation=0,
-                verticalalignment='center', ha='center', va='center', bbox=props)
+            bwidth = 0.25
+            bheight= 0.4
+            
+            if not seriesColorMap is None:
+                faceColor = seriesColorMap[ series2name[series] ]( 0.7 )[:3]
+            else:
+                faceColor = mcolors.to_rgb("lightgrey")
+            
+            faceColorRGB = mcolors.to_rgb(faceColor)
+            textColor = cls.get_text_color_based_on_background_color(faceColorRGB, "#FFFFFF", "#000000")
+            
+            rect = patches.FancyBboxPatch( (si-0.5*bwidth, -2 - 0.5*bheight), width=bwidth, height=bheight, facecolor=faceColorRGB, linewidth=0)
+            rect.set_boxstyle("round", rounding_size=0.05, pad=0)
+            ax.add_patch(rect)
+
+            ax.text(si, -2, series2name[series], transform=ax.transData, fontsize=14,rotation=0,
+                verticalalignment='center', ha='center', va='center', bbox=None, color=textColor)
 
 
         #plt.ylim((minNodeLevel-1.5, maxNodeLevel+0.5))
@@ -222,10 +297,11 @@ class SankeyPlotter:
             cb = fig.colorbar(ScalarMappable(norm=norm, cmap=cmap), ax=ax, orientation='horizontal', shrink=0.25, fraction=0.005)
             cb.set_label("Membership")
         
-        
-        plt.xlim(minXValue-1, maxXValue+1)
-        plt.ylim(minYValue-2, maxYValue+2)
-        
+        xpadding=0.25
+        ypadding=0.5
+        plt.xlim(minXValue-xpadding, maxXValue+xpadding)
+        plt.ylim(-2-ypadding, maxYValue+1+ypadding)
+                
         if not title is None:
             print("Adding title", title)
             plt.title(title)
@@ -236,6 +312,67 @@ class SankeyPlotter:
 
         plt.show()
         plt.close()
+
+
+    @classmethod
+    def get_color_is_bright(cls, bgColor):
+        r, g, b = bgColor
+        uicolors = [1.0-r, 1.0-g, 1.0-b]
+        adjusted = []
+        for col in uicolors:
+            col2 = col
+            if col <= 0.03928:
+                col2 = col/12.92
+            col2 = pow((col2 + 0.055)/1.055,2.4)
+            adjusted.append(col2)
+        L = (0.2126 * adjusted[0] + 0.7152 * adjusted[1] + (0.072 * adjusted[2]))
+        
+        return L < 0.179
+
+    @classmethod
+    def get_text_color_based_on_background_color(cls, bgColor, lightColor, darkColor):
+
+        if cls.get_color_is_bright(bgColor):
+            return darkColor
+        else:
+            return lightColor
+        
+    @classmethod
+    def scale_lightness(cls, rgb, scale_l):
+        # convert rgb to hls
+        h, l, s = colorsys.rgb_to_hls(*rgb)
+        # manipulate h, l, s values and return as rgb
+        return colorsys.hls_to_rgb(h, min(1, l * scale_l), s = s)
+
+    @classmethod
+    def createColorMap(cls, inColor, mode="scaling"):
+        
+        inColorRGB = mcolors.to_rgb(inColor)
+        
+        if mode == "scaling":
+            
+
+            
+            brightInColor = cls.scale_lightness(inColorRGB, 1.5)
+            colorList = [brightInColor, inColorRGB]
+        
+        elif mode == "diverging":
+            
+            def get_complementary(color):
+                color = "#%02x%02x%02x" % color
+                color = color[1:]
+                color = int(color, 16)
+                comp_color = 0xFFFFFF ^ color
+                comp_color = "#%06X" % comp_color
+                return mcolors.to_rgb(comp_color)
+            
+            inCColorRGB = get_complementary(tuple([int(x*255) for x in inColorRGB]))
+            colorList = [cls.scale_lightness(inCColorRGB, 0.5), inCColorRGB,  cls.scale_lightness(inColorRGB, 1.5), inColorRGB]
+            
+        cmap = mcolors.LinearSegmentedColormap.from_list("custom", colorList)
+        
+        return cmap
+        
 
 def to_fuzzy(value, fzy):
 
@@ -830,10 +967,15 @@ class FlowAnalysis:
 
     def __init__(self, flows, symbol_column, series2name, exprMF):
         
+        nExprMF = {}
+        for x in exprMF:
+            idx = x
+            if idx.startswith("cluster."):
+                idx = idx.replace("cluster.", "")
+            nExprMF[idx] = exprMF[x]
             
         for x in series2name:
-            clusterName = "cluster.{}".format(x[0])
-            for term in exprMF[clusterName].terms:
+            for term in nExprMF[x[0]].terms:
                 checkCol = "{}.cluster.{}".format(term, x[0])
                 if not checkCol in flows.columns:
                     print("Missing column", checkCol)
@@ -844,10 +986,19 @@ class FlowAnalysis:
         self.seriesOrder = [x[0] for x in series2name]
         self.series2name = {x[0]: x[1] for x in series2name}
         self.symbol_column = symbol_column
-        self.exprMF = exprMF
+        self.exprMF = nExprMF
         
-        firstState = list(self.exprMF.keys())[0]
-        self.levelOrder =  [x for x in self.exprMF[firstState].terms]
+        self.levelOrder = {}
+        for state in self.exprMF:
+            self.levelOrder[state] = [x for x in self.exprMF[state].terms]
+            
+        notEqualLevelOrder = False
+        for state1 in self.exprMF:
+            for state2 in self.exprMF:
+                if len(set(self.levelOrder[state1]).difference(self.levelOrder[state2])):
+                    notEqualLevelOrder = True        
+        if notEqualLevelOrder:
+            print("WARNING: Your level orders are not equal. Scales in some plots may not reflect this appropriately.")
         
 
     @property
@@ -856,10 +1007,24 @@ class FlowAnalysis:
         if not hasattr(self,"_flowid2flow"):
             print("Creating FlowIDs")
             self._flowid2flow = {}
-            for comb in list(itertools.product(self.levelOrder, repeat=len(self.series2name))):
-                    
-                largeComp = [x for x in zip(self.series2name, comb)]           
-                self._flowid2flow[len(self._flowid2flow)] = largeComp
+            
+            def createFlows(states):
+                if len(states) == 0:
+                    return [[]]
+                
+                rems = createFlows(states[1:])
+                curstate = states[0]
+                rets = []
+                for level in self.levelOrder[curstate]:
+                    for exflow in rems:
+                        flow = [(curstate, level)] + exflow
+                        rets.append(flow)                
+                return rets               
+            
+            for flow in createFlows(self.seriesOrder):
+                self._flowid2flow[len(self._flowid2flow)] = flow
+                
+                
         return self._flowid2flow
 
     def prepare_flows(self, flowDF=None):
@@ -884,7 +1049,19 @@ class FlowAnalysis:
         return flowgroup_flow, flowgroup_route, flowgroup_genes
 
 
-    def plot_flows(self, use_flows = None, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts = lambda x: np.sqrt(x), verbose=False):
+    def create_series_color_map(self, seriesColors, mode="scaling"):
+        if seriesColors is None:
+            seriesColors = {}
+            for si, x in enumerate(self.series2name):
+                seriesColors[self.series2name[x]] = plt.get_cmap("viridis")(si/len(self.series2name))
+        seriesColorMap = {}
+        for x in seriesColors:
+            scmap = SankeyPlotter.createColorMap(seriesColors[x], mode)
+            seriesColorMap[x] = scmap
+            
+        return seriesColorMap
+
+    def plot_flows(self, use_flows = None, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts = lambda x: np.sqrt(x), verbose=False, seriesColors=None, colorMode="scaling"):
 
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
@@ -897,10 +1074,13 @@ class FlowAnalysis:
             for x in weightSequence:
                 print(x)
 
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
+        
+        seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
+
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile, verbose=verbose, seriesColorMap=seriesColorMap)
 
 
-    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="Spectral"):
+    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="Spectral", seriesColors=None, colorMode="scaling"):
         
         
         if genes is None:
@@ -908,13 +1088,19 @@ class FlowAnalysis:
         else:
             flowDF=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
+
+        allSeries = [x for x in self.series2name]
         Cflowid2flow = {}
-        for comb in list(itertools.product(reversed(self.levelOrder), repeat=2)):
-
-            for i in range(len(self.series2name.keys()) - 1):
-
-                series=list(self.series2name.keys())
-                largeComp = [x for x in zip([series[i],series[i+1]], comb)]          
+        for i in range(len(allSeries) - 1):
+            
+            srcSeries = allSeries[i]
+            tgtSeries = allSeries[i+1]
+        
+            for comb in list(itertools.product(
+                reversed(self.levelOrder[srcSeries]),
+                reversed(self.levelOrder[tgtSeries])
+                )):
+                largeComp = [x for x in zip([allSeries[i],allSeries[i+1]], comb)]          
                 Cflowid2flow[len(Cflowid2flow)] = largeComp
         
         if use_flows is None:
@@ -944,8 +1130,11 @@ class FlowAnalysis:
 
         if specialColors is None:
             indices=[w[0] for w in weightSequence ]
-            colours=sns.color_palette(sns_palette,len(self.levelOrder))
-            c = [colours[j] for j in range(len(self.levelOrder)) for i in range(int(len(indices)/len(self.levelOrder)))]
+            
+            maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
+            
+            colours=sns.color_palette(sns_palette,maxLevels)
+            c = [colours[j] for j in range(maxLevels) for i in range(int(len(indices)/maxLevels))]
 
       
             specialColors=pd.DataFrame({
@@ -954,7 +1143,12 @@ class FlowAnalysis:
         weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
         new_indices=[w[0] for w in weightSequence ]
         specialColors={k: v for k, v in specialColors.items() if k in new_indices}
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder,specialColors=specialColors)
+        
+        
+        
+        seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
+        
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap)
 
 
 
@@ -964,46 +1158,95 @@ class FlowAnalysis:
         colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_column(
             pl.fold(0, lambda acc, s: acc + s, pl.all().exclude("column")).alias("horizontal_sum")
         )
-        order1=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in colmeans.select(['column']).to_series()]]
-        order2=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in colmeans.select(['column']).to_series()]]
-
+                
+        order1=[self.levelOrder[state].index(level) for level,state in [(x.split('.')[0],x.split('.')[2])  for x in colmeans.select(['column']).to_series()]]
+        order2=[self.series2name[i] for i in [x.split('.')[2] for x in colmeans.select(['column']).to_series()]]
 
         colmeans=colmeans.with_column(pl.Series(name="order1", values=order1))
         colmeans=colmeans.with_column(pl.Series(name="order2", values=order2))
+        
+        colmeans=colmeans.sort("order2")
+        
         fig, ax = plt.subplots()
         bar=sns.barplot(data=colmeans.to_pandas(), x="order1", y="horizontal_sum", hue="order2")
-        ax.set_xticklabels(self.levelOrder)
+        
+        xtickLabels = []
+        for tickpos in ax.get_xticks():
+            posLabels=[]
+            for state in sorted(self.levelOrder):
+                posLabels.append( "{state}: {label}".format(state=self.series2name[state], label=self.levelOrder[state][tickpos]) )
+            xlabel = "\n".join(posLabels)
+            xtickLabels.append(xlabel)
+            
+        ax.set_xticklabels(xtickLabels)
+        
         ax.set_xlabel("Levels")
         ax.set_ylabel("Membership sum")
         ax.legend(title='State')
         fig.show()
         
     def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
+        
+        
+        #firstLevelOrder = self.levelOrder[list(self.levelOrder.keys())[0]]
+        
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
         pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)      
         
         # OR sort by states; switch hlines for correct white lines
         #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
-        pd_filtered_flow["order1"]=[self.levelOrder.index(i) for i in [x.split('.')[0] for x in pd_filtered_flow.index]]
-        pd_filtered_flow["order2"]=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in pd_filtered_flow.index]]
-        pd_filtered_flow= pd_filtered_flow.sort_values(["order1","order2"])
-        pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
+        pd_filtered_flow["orderLevel"]=[self.levelOrder[state].index(level) for level,state in [(x.split('.')[0],x.split('.')[2]) for x in pd_filtered_flow.index]]
+        pd_filtered_flow["orderState"]=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in pd_filtered_flow.index]]
+        pd_filtered_flow= pd_filtered_flow.sort_values(["orderState", "orderLevel"])
+        #pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
         
-        col_order = [x for x in genes if x in pd_filtered_flow.columns]
+        col_order = ["orderLevel", "orderState"]+[x for x in genes if x in pd_filtered_flow.columns]
         pd_filtered_flow = pd_filtered_flow[col_order]
         
         if verbose:
             print(pd_filtered_flow)
+        
+        
         newIndex = []
         
-        for x in pd_filtered_flow.index:
-            x = x.split(".")
+        for ri, row in pd_filtered_flow.iterrows():
+            
+            rorder1 = int(row["orderLevel"])
+            rorder2 = int(row["orderState"])
+            
+            state = self.series2name[self.seriesOrder[rorder2]]
+            level = self.levelOrder[ self.seriesOrder[rorder2] ][rorder1]
             
             if prefix is None:
-                newIndex.append("{} {} ({}) ".format(".".join(x[1:len(x)-1]).title(), x[-1], x[0]))
+                newIndex.append("{} {}".format(state, level))
             else:
-                newIndex.append("{} {} ({}) ".format(prefix, x[-1], x[0]))
+                newIndex.append("{} {} ({})".format(prefix, state, level))
+        
+        
+        # number of elements until hline
+        stateCounts = []
+        states = list(pd_filtered_flow["orderState"])
+        lastState = states[0]
+        curCount = 1
+        for x in states[1:]:
+            if x == lastState:
+                curCount += 1
+            else:
+                stateCounts.append(curCount)
+                lastState = x
+                curCount = 1
+        
+        stateCounts=np.cumsum(stateCounts)
+        pd_filtered_flow = pd_filtered_flow.drop(["orderLevel","orderState"], axis=1)
+        
+        #for x in pd_filtered_flow.index:
+        #    x = x.split(".")
+        #    
+        #    if prefix is None:
+        #        newIndex.append("{} {} ({}) ".format(".".join(x[1:len(x)-1]).title(), x[-1], x[0]))
+        #    else:
+        #        newIndex.append("{} {} ({}) ".format(prefix, x[-1], x[0]))
             
         pd_filtered_flow.index = newIndex
                 
@@ -1018,7 +1261,10 @@ class FlowAnalysis:
         
         g.fig.suptitle(name) 
         g.ax_heatmap.yaxis.set_ticks_position("left")
-        g.ax_heatmap.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *g.ax_heatmap.get_xlim(),colors="white")
+        g.ax_heatmap.hlines(
+            stateCounts,
+            *g.ax_heatmap.get_xlim(),
+            colors="white")
         #ax.set(title=name)
         #ax.hlines([[ int(pd_filtered_flow.shape[0]/len(self.levelOrder))  *x for x in range(len(self.levelOrder))]], *ax.get_xlim(),colors="white")
 
