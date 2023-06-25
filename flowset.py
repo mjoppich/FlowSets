@@ -150,7 +150,6 @@ class SankeyPlotter:
         #nodeWeigthSequence = [ (("WT", 2), ("KO", 0), 1), (("WT", 2), ("KO", -2), 1), (("WT", -1), ("KO", -2), 1) ]
         nodeOffsets = defaultdict(lambda: 0)
 
-        colours = cls.generate_colormap(len(nodeWeigthSequence))
 
         maxFlowPerNode = defaultdict(lambda: 0)
 
@@ -171,6 +170,28 @@ class SankeyPlotter:
 
         #reorder nodeWeigthSequence such that paths are ordered
         nodeWeigthSequence = sorted(nodeWeigthSequence, key=lambda x: [nodePositions[ne][1] for ne in x[1][0:-1]], reverse=True)
+
+        nodeColors=None
+        if not seriesColorMap is None:
+            
+            nodeColors = {}
+            for npi, nn in enumerate(nodePositions):
+                nodePosition = nodePositions[nn]
+                nodeColor = seriesColorMap[ series2name[nn[0]] ]( nodePosition[1]/(levelHeight*(maxNumLevels-1)) )[:3]
+                nodeColors[nn] = nodeColor
+
+
+            colours = []
+            for si, fIDWeights in enumerate(nodeWeigthSequence):
+
+                fid, nws = fIDWeights
+                startNode = nws[0]
+                
+                colours.append( nodeColors[startNode] )
+                
+        else:
+            colours = cls.generate_colormap(len(nodeWeigthSequence))
+
 
         # close any maybe still open plot
         plt.close()
@@ -227,6 +248,8 @@ class SankeyPlotter:
                         c = "grey"                    
                 else:
                     c = colours[si % len(colours)]
+                    
+                    
                 plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=0.5, color=c, axes=ax, linewidth=linewidth)
 
 
@@ -238,10 +261,7 @@ class SankeyPlotter:
             nodeStr = "{lvl}".format(cond=series2name[nn[0]], lvl=nn[1])
             nodePosition = nodePositions[nn]
                                     
-            if not seriesColorMap is None:
-                nodeColor = seriesColorMap[ series2name[nn[0]] ]( nodePosition[1]/(levelHeight*(maxNumLevels-1)) )[:3]
-            else:
-                nodeColor = mcolors.to_rgb("lightgrey")
+            nodeColor = nodeColors[nn]
             
             
             rect = patches.FancyBboxPatch( (nodePosition[0]-0.1, nodePosition[1]-0.75), width=0.2, height=1.5, facecolor=nodeColor,linewidth=0)
@@ -273,7 +293,7 @@ class SankeyPlotter:
             bheight= 0.4
             
             if not seriesColorMap is None:
-                faceColor = seriesColorMap[ series2name[series] ]( 0.7 )[:3]
+                faceColor = seriesColorMap[ series2name[series] ]( 0.9 )[:3]
             else:
                 faceColor = mcolors.to_rgb("lightgrey")
             
