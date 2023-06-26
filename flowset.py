@@ -119,7 +119,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None, independentEdges=False):
 
         
         levelHeight=2
@@ -149,8 +149,6 @@ class SankeyPlotter:
 
         #nodeWeigthSequence = [ (("WT", 2), ("KO", 0), 1), (("WT", 2), ("KO", -2), 1), (("WT", -1), ("KO", -2), 1) ]
         nodeOffsets = defaultdict(lambda: 0)
-
-
         maxFlowPerNode = defaultdict(lambda: 0)
 
         for si, fIDWeights in enumerate(nodeWeigthSequence):
@@ -158,10 +156,23 @@ class SankeyPlotter:
             weight = transformCounts(nws[-1])
             nodes = nws[0:-1]
 
-            for node in nodes:
-                maxFlowPerNode[node] += weight
+            for ni, node in enumerate(nodes):
+                
+                if independentEdges:
+                    
+                    if ni % 2 == 0:
+                        maxFlowPerNode["{}_in".format(node)] += weight
+                    else:
+                        maxFlowPerNode["{}_out".format(node)] += weight
 
-        maxFlowInAllNodes = max([x for x in maxFlowPerNode.values()])
+                else:
+                    maxFlowPerNode[node] += weight
+
+
+        numNodes = len(series2name)
+        
+
+        maxFlowInAllNodes = sum([x for x in maxFlowPerNode.values()])/numNodes
         if verbose:
             print("Max Flow Per Node")
             for node in maxFlowPerNode:
@@ -180,14 +191,19 @@ class SankeyPlotter:
                 nodeColor = seriesColorMap[ series2name[nn[0]] ]( nodePosition[1]/(levelHeight*(maxNumLevels-1)) )[:3]
                 nodeColors[nn] = nodeColor
 
-
             colours = []
             for si, fIDWeights in enumerate(nodeWeigthSequence):
 
                 fid, nws = fIDWeights
                 startNode = nws[0]
                 
-                colours.append( nodeColors[startNode] )
+                nodeColor = nodeColors[startNode]
+                if cls.get_color_is_bright(nodeColor):
+                    patchColor = cls.scale_lightness(nodeColor, 0.75)
+                else:
+                    patchColor = cls.scale_lightness(nodeColor, 1.25)
+                
+                colours.append( patchColor )
                 
         else:
             colours = cls.generate_colormap(len(nodeWeigthSequence))
@@ -227,8 +243,15 @@ class SankeyPlotter:
                 p1 = nodePositions[src]
                 p2 = nodePositions[tgt]
                 
-                p1 = p1[0], p1[1] - nodeOffsets[src] + (maxFlowPerNode[src]/maxFlowInAllNodes)/2.0
-                p2 = p2[0], p2[1] - nodeOffsets[tgt] + (maxFlowPerNode[tgt]/maxFlowInAllNodes)/2.0
+                if independentEdges:
+                    srcName = "{}_in".format(src)
+                    tgtName = "{}_out".format(tgt)
+                else:
+                    srcName = src
+                    tgtName = tgt
+                
+                p1 = p1[0], p1[1] - nodeOffsets[srcName] + (maxFlowPerNode[srcName]/maxFlowInAllNodes)/2.0
+                p2 = p2[0], p2[1] - nodeOffsets[tgtName] + (maxFlowPerNode[tgtName]/maxFlowInAllNodes)/2.0
 
                 #left/right displacement so paths appear to hit outer box area
                 p1 = (p1[0]+0.1, p1[1])
@@ -236,10 +259,10 @@ class SankeyPlotter:
 
                 xs, ys1, ys2 = cls.sigmoid_arc(p1, weight, p2, resolution=0.1, smooth=0, ax=ax)
 
-                nodeOffsets[src] += weight
+                nodeOffsets[srcName] += weight
 
-                if tgt[0] == seriesOrder[-1]:
-                    nodeOffsets[tgt] += weight
+                if (tgt[0] == seriesOrder[-1]) or independentEdges:
+                    nodeOffsets[tgtName] += weight
 
                 if not specialColors is None:
                     if fid in specialColors:
@@ -248,12 +271,9 @@ class SankeyPlotter:
                         c = "grey"                    
                 else:
                     c = colours[si % len(colours)]
+                                        
                     
-                    
-                plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=0.5, color=c, axes=ax, linewidth=linewidth)
-
-
-
+                plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=0.7, color=c, axes=ax, linewidth=linewidth)
 
 
         for npi, nn in enumerate(nodePositions):
@@ -261,9 +281,8 @@ class SankeyPlotter:
             nodeStr = "{lvl}".format(cond=series2name[nn[0]], lvl=nn[1])
             nodePosition = nodePositions[nn]
                                     
-            nodeColor = nodeColors[nn]
-            
-            
+            nodeColor = nodeColors.get(nn, "lightgrey")
+
             rect = patches.FancyBboxPatch( (nodePosition[0]-0.1, nodePosition[1]-0.75), width=0.2, height=1.5, facecolor=nodeColor,linewidth=0)
             rect.set_boxstyle("round", rounding_size=0.1, pad=0)
             ax.add_patch(rect)
@@ -373,7 +392,7 @@ class SankeyPlotter:
             
 
             
-            brightInColor = cls.scale_lightness(inColorRGB, 1.5)
+            brightInColor = cls.scale_lightness(inColorRGB, 2)
             colorList = [brightInColor, inColorRGB]
         
         elif mode == "diverging":
@@ -1168,7 +1187,7 @@ class FlowAnalysis:
         
         seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
         
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=None, seriesColorMap=seriesColorMap, independentEdges=True)
 
 
 
