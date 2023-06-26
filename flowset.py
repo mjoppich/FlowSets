@@ -182,10 +182,9 @@ class SankeyPlotter:
         #reorder nodeWeigthSequence such that paths are ordered
         nodeWeigthSequence = sorted(nodeWeigthSequence, key=lambda x: [nodePositions[ne][1] for ne in x[1][0:-1]], reverse=True)
 
-        nodeColors=None
+        nodeColors={}
         if not seriesColorMap is None:
             
-            nodeColors = {}
             for npi, nn in enumerate(nodePositions):
                 nodePosition = nodePositions[nn]
                 nodeColor = seriesColorMap[ series2name[nn[0]] ]( nodePosition[1]/(levelHeight*(maxNumLevels-1)) )[:3]
@@ -281,7 +280,7 @@ class SankeyPlotter:
             nodeStr = "{lvl}".format(cond=series2name[nn[0]], lvl=nn[1])
             nodePosition = nodePositions[nn]
                                     
-            nodeColor = nodeColors.get(nn, "lightgrey")
+            nodeColor = nodeColors.get(nn, (0.7,0.7,0.7))
 
             rect = patches.FancyBboxPatch( (nodePosition[0]-0.1, nodePosition[1]-0.75), width=0.2, height=1.5, facecolor=nodeColor,linewidth=0)
             rect.set_boxstyle("round", rounding_size=0.1, pad=0)
