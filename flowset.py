@@ -170,11 +170,16 @@ class SankeyPlotter:
 
 
         numNodes = len(series2name)
-        
+        if independentEdges: 
+            numNodes=(numNodes*2)-2
 
         maxFlowInAllNodes = sum([x for x in maxFlowPerNode.values()])/numNodes
         if verbose:
             print("Max Flow Per Node")
+            print( sum([x for x in maxFlowPerNode.values()]))
+            print(maxFlowInAllNodes)
+
+            print(numNodes)
             for node in maxFlowPerNode:
                 print(node, maxFlowPerNode[node])
 
@@ -1118,7 +1123,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile, verbose=verbose, seriesColorMap=seriesColorMap)
 
 
-    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="Spectral", seriesColors=None, colorMode="scaling"):
+    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title=None):
         
         
         if genes is None:
@@ -1165,16 +1170,28 @@ class FlowAnalysis:
             weightSequence.append(
                         (fgid, outlist)
                     )
-
         if specialColors is None:
             indices=[w[0] for w in weightSequence ]
-            
-            maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
-            
-            colours=sns.color_palette(sns_palette,maxLevels)
-            c = [colours[j] for j in range(maxLevels) for i in range(int(len(indices)/maxLevels))]
+            startingnodes=[w[1][0][1] for w in weightSequence ]
+            #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
+            levelColors=dict.fromkeys(startingnodes)
+            for i,k in enumerate(list(levelColors.keys())):
+                levelColors[k] =i 
+            maxLevels=len(levelColors.keys())
 
-      
+            colours=sns.color_palette(sns_palette,maxLevels)
+            # color each state transition:             c = [colours[j] for j in range(maxLevels) for i in range(int(len(indices)/maxLevels))  ]
+
+            # color end node transition:               c = [colours[j] for i in range(int(len(indices)/maxLevels)) for j in range(maxLevels) ]
+            # or  [colours[k] for j in range(len(self.seriesOrder)-1)  for i in range(maxLevels) for k in range(maxLevels) ]
+
+            # color every start node:            colours=sns.color_palette(sns_palette,max(int(len(indices)/maxLevels),maxLevels))     c = [colours[j] for j in range(int(len(indices)/maxLevels)) for i in range(maxLevels)  ]
+
+            # color start node transition:
+
+            #c = [colours[i] for j in range(len(self.seriesOrder)-1)  for i in range(maxLevels) for k in range(maxLevels) ]
+
+            c=[colours[levelColors[s]] for s in startingnodes]
             specialColors=pd.DataFrame({
                 'values':c},
                 index=indices).to_dict()['values']
@@ -1183,10 +1200,11 @@ class FlowAnalysis:
         specialColors={k: v for k, v in specialColors.items() if k in new_indices}
         
         
-        
-        seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
-        
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=None, seriesColorMap=seriesColorMap, independentEdges=True)
+        if not seriesColors is None:
+            seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
+        else:
+            seriesColorMap=None
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,title=title)
 
 
 
@@ -1387,30 +1405,54 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title)
                        
 
-    def plot_flow_memberships(self,use_flows, n_genes=30,color_genes=None, gene_exclude_patterns=[], figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
+    def plot_flow_memberships(self,use_flows, n_genes=30,color_genes=None, gene_include_patterns=[],gene_exclude_patterns=[], figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=0.0001,parallel=True):
         flowDF=self.flows.clone()
         
         for gene_exclude_pattern in gene_exclude_patterns:
             flowDF = flowDF.filter(~pl.col(self.symbol_column).str.starts_with(gene_exclude_pattern))
+        if(len(gene_include_patterns)>0):
+            flowDF = flowDF.filter(pl.col(self.symbol_column).str.starts_with(pl.Series(gene_include_patterns)))
         
         flowScores = pl.DataFrame()
-        
-        for fgid in use_flows:
-            
-            flowCols, flow = self._get_flow_columns(fgid)
 
-            flowScore_perGene = flowDF.select([self.symbol_column,
-                        pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-                    ]       
-                    )
+        
+        def prepare_flow_calculation(fa, fgid):
+            flowCols, flow = self._get_flow_columns(fgid)
+            #filter(~pl.all(pl.col(flowCols) > min_gene_flow)).
+            flowScore_perGene = flowDF.filter(pl.all(pl.col(flowCols) > min_gene_flow)).select([self.symbol_column,
+                            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                        ]       
+                        )
             flowScore_perGene.columns=[self.symbol_column,str(fgid) ]
 
+        
+            return(flowScore_perGene)
+        
+        bar = makeProgressBar()
+
+        
+        if parallel:
+            
+            print("Starting Event Loop")
+            from joblib import Parallel, delayed, parallel_backend
+            with parallel_backend('loky', n_jobs=20):
+                results = Parallel()(delayed(prepare_flow_calculation)(self, fgid) for fgid in bar(use_flows))
+            print("Event Loop Completed")
+            
+        else:
+            results=[]
+            for fgid in bar(use_flows):
+                results.append(prepare_flow_calculation(self,fgid))
+
+
+        for idx, res in enumerate(results):
+                    
             if flowScores.shape == (0,0):
-                flowScores=flowScore_perGene
+                flowScores=res
             else:
-                flowScores=flowScores.join(flowScore_perGene,on=self.symbol_column,how="inner")
+                flowScores=flowScores.join(res,on=self.symbol_column,how="outer")
         
-        
+        flowScores=flowScores.fill_null(0)  
         ## here also coloring bars content from flows would be possible
         flowScores_df= flowScores.select([self.symbol_column,
                         pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
@@ -1482,7 +1524,7 @@ class FlowAnalysis:
                 ax2.set_facecolor('white')
                 ax2.grid(which='major', color='#EBEBEB', linewidth=1)
                 ax2.grid(which='minor', color='#EBEBEB', linewidth=1)
-                ax2.tick_params(axis="both",labelsize=labelsize)
+                ax2.tick_params(axis="y",labelsize=labelsize)
                 ax2.axis(ymin=1)
 
         fig.tight_layout()
