@@ -138,3 +138,7 @@ dmypy.json
 
 
 benchmark_proc/wgcna
+
+
+*.gmt
+*.gmt.zip
