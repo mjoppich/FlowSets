@@ -471,24 +471,24 @@ def distribution_to_fuzzy(meanValue, sdValue, exprCells, fzMFs, threshold=0.0):
     #return [list(x) for x in zip(fzMFs.terms, fuzzySet)]
     return outset
 
-def toWideDF( df,symbol_column ):
+def toWideDF( df,symbol_column, cluster_column="cluster"):
     #dfPivot = pd.pivot(indf, index=["gene"], columns=["cluster"], values=["fuzzy_set"])
     #dfWide = dfPivot.copy()
     #dfWide.columns = dfWide.columns.droplevel(0)
     #dfWide.reset_index(inplace=True)
     #dfWide.reset_index(drop=True, inplace=True)
     
-    dfPivot = df.pivot(values=["fuzzy.mfs"], index=symbol_column, columns="cluster")
+    dfPivot = df.pivot(values=["fuzzy.mfs"], index=symbol_column, columns=cluster_column)
     return dfPivot
 
-def to_homogeneous(df, exprMFs, is_foldchange=False):
+def to_homogeneous(df:pl.DataFrame, exprMFs, is_foldchange=False):
         
     #print(fuzzyBins)
     #print(fuzzyValues)
 
     for col in exprMFs:
         
-        print(col)
+        print("to_homogeneous:", col)
                 
         exprMF = exprMFs[col]
         
@@ -498,15 +498,13 @@ def to_homogeneous(df, exprMFs, is_foldchange=False):
         else:
             #fuzzyBins = [x for x in exprMF.terms]
             fuzzyValues = [float(x) for x in to_fuzzy(0, exprMF)]
-                    
-        df=df.with_column( 
+                                
+        df=df.with_columns( 
             pl.when(pl.col(col).is_null())
             .then( fuzzyValues )
             .otherwise(pl.col(col)).alias(col)
         )
-        
-    print(df.head())
-        
+                
     return df
 
 def identify_threshold_level(dfWideNew, force_calculation = False, clusterColumns=None):
@@ -545,8 +543,8 @@ def identify_threshold_level(dfWideNew, force_calculation = False, clusterColumn
 
             clDF.columns = [binColName, mfColName]
 
-            clDF.with_column(pl.col(binColName).cast(pl.Categorical))
-            clDF.with_column(pl.col(mfColName).cast(pl.Float32))
+            clDF.with_columns(pl.col(binColName).cast(pl.Categorical))
+            clDF.with_columns(pl.col(mfColName).cast(pl.Float32))
 
             explDF = pl.concat([explDF, clDF])
             explDF = explDF.filter(pl.col(mfColName) > currentThreshold)
@@ -839,7 +837,7 @@ class FlowAnalysis:
             exprCountCol = exprData.columns.index(exprcolName)
         else:
 
-            exprData=exprData.with_column(pl.lit(1).alias("cell_expr"))
+            exprData=exprData.with_columns(pl.lit(1).alias("cell_expr"))
             exprCountCol = exprData.columns.index("cell_expr")
             exprcolName ="cell_expr"
 
@@ -900,7 +898,7 @@ class FlowAnalysis:
                     seriesOut
                     .with_row_count('id')
                     .explode("fuzzy.mfs")
-                    .with_column(
+                    .with_columns(
                         ("FV_" + pl.arange(0, pl.count()).cast(pl.Utf8).str.zfill(2))
                         .over("id")
                         .alias("col_nm")
@@ -948,8 +946,9 @@ class FlowAnalysis:
         allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
         allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
-        df = pl.concat([allExpr, allFuzzy], how="horizontal")           
-        dfWide = to_homogeneous(toWideDF(df,symbol_column), exprMFs)
+        df = pl.concat([allExpr, allFuzzy], how="horizontal")
+                 
+        dfWide = to_homogeneous(toWideDF(df,symbol_column, cluster_column=clusterColName), exprMFs)
         
         return dfWide, exprMFs
 
@@ -963,21 +962,29 @@ class FlowAnalysis:
         
     
     @classmethod
-    def to_vwide(cls, indf, mfFuzzy):
+    def to_vwide(cls, indf, mfFuzzy, meta_columns=["gene"]):
         
-        clusterCols = [x for x in indf.columns if x.startswith("cluster.")]
+        clusterCols = [x for x in indf.columns if not x in meta_columns]
         
         for col in clusterCols:
             assert(col in mfFuzzy)
         
         outDF = indf.clone()
         
+        
+        def listcol_to_cols(x):
+            retDict = OrderedDict(zip( ["{}.{}".format(y, col) for y in mfFuzzy[col].terms] , x[col] ))
+            return retDict
+                                
+        
+        
         for col in clusterCols:
-            outDF = outDF.with_column(
-                pl.struct([col]).apply(lambda x:
-                                dict(zip( [x+".{}".format(col) for x in mfFuzzy[col].terms] , x[col] ))
-                                ).alias("fuzzy.mfs")
-            ).unnest("fuzzy.mfs")
+            
+            structAlias = "{}.mfs".format(col)
+            
+            outDF = outDF.with_columns(
+                pl.struct([col]).apply(listcol_to_cols).alias(structAlias)
+            ).unnest(structAlias)
             
             outDF = outDF.drop(col)
             
@@ -994,8 +1001,8 @@ class FlowAnalysis:
         mfColumns = [x.replace("bin.", "mf.") for x in binColumns]
         print(mfColumns)
         
-        df=df.with_column(df.apply( lambda row: tuple( [row[x] for x in binColumnsIndex] )).to_series().alias("group.flow"))
-        df=df.with_column(pl.struct(mfColumns).apply( lambda row: np.prod(row.values())).to_series().alias("mf.flow"))
+        df=df.with_columns(df.apply( lambda row: tuple( [row[x] for x in binColumnsIndex] )).to_series().alias("group.flow"))
+        df=df.with_columns(pl.struct(mfColumns).apply( lambda row: np.prod(row.values())).to_series().alias("mf.flow"))
         
         allgroups = list(set(df.select(pl.col("group.flow"))))
         
@@ -1003,12 +1010,12 @@ class FlowAnalysis:
         for idx, flow in enumerate(allgroups):
             flow2id[flow] = idx
         
-        df=df.with_column(pl.struct(["group.flow"]).apply( lambda row: allgroups[row["group.flow"]] ).to_series().alias("id.flow"))
+        df=df.with_columns(pl.struct(["group.flow"]).apply( lambda row: allgroups[row["group.flow"]] ).to_series().alias("id.flow"))
 
         return explDF
 
 
-    def __init__(self, flows, symbol_column, series2name, exprMF):
+    def __init__(self, flows, symbol_column, series2name, exprMF, sep="."):
         
         nExprMF = {}
         for x in exprMF:
@@ -1019,12 +1026,12 @@ class FlowAnalysis:
             
         for x in series2name:
             for term in nExprMF[x[0]].terms:
-                checkCol = "{}.cluster.{}".format(term, x[0])
+                checkCol = "{}{}{}".format(term, sep, x[0])
                 if not checkCol in flows.columns:
                     print("Missing column", checkCol)
                     raise ValueError("Missing column {}".format(checkCol))
         
-        
+        self.sep = sep
         self.flows = flows
         self.seriesOrder = [x[0] for x in series2name]
         self.series2name = {x[0]: x[1] for x in series2name}
@@ -1155,7 +1162,7 @@ class FlowAnalysis:
             if not fgid in use_flows:
                 continue
 
-            flowCols=["{}.cluster.{}".format(fclass, state) for state, fclass  in Cflowid2flow[fgid] ]
+            flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in Cflowid2flow[fgid] ]
             flowScoreDF = flowDF.select(
                     pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
                     )
@@ -1163,7 +1170,7 @@ class FlowAnalysis:
 
 
             if not transformCounts is None:
-                fgid = transformCounts(fgid)
+                flowScore = transformCounts(flowScore)
 
             outlist = list(Cflowid2flow[fgid])
             outlist.append(flowScore )
@@ -1211,15 +1218,15 @@ class FlowAnalysis:
     def hist_level_membershipsum(self):
 
         flowDF=self.flows
-        colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_column(
+        colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_columns(
             pl.fold(0, lambda acc, s: acc + s, pl.all().exclude("column")).alias("horizontal_sum")
         )
                 
         order1=[self.levelOrder[state].index(level) for level,state in [(x.split('.')[0],x.split('.')[2])  for x in colmeans.select(['column']).to_series()]]
         order2=[self.series2name[i] for i in [x.split('.')[2] for x in colmeans.select(['column']).to_series()]]
 
-        colmeans=colmeans.with_column(pl.Series(name="order1", values=order1))
-        colmeans=colmeans.with_column(pl.Series(name="order2", values=order2))
+        colmeans=colmeans.with_columns(pl.Series(name="order1", values=order1))
+        colmeans=colmeans.with_columns(pl.Series(name="order2", values=order2))
         
         colmeans=colmeans.sort("order2")
         
@@ -1246,14 +1253,15 @@ class FlowAnalysis:
         
         #firstLevelOrder = self.levelOrder[list(self.levelOrder.keys())[0]]
         
-        filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
-
-        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,0].to_pandas().tolist(), index=filtered_flow[:,1:].columns)      
+        filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )      
+        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,1:].columns, index=filtered_flow[:,0].to_pandas().tolist())
         
+        pd_filtered_flow = pd_filtered_flow.transpose()
+                
         # OR sort by states; switch hlines for correct white lines
         #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
-        pd_filtered_flow["orderLevel"]=[self.levelOrder[state].index(level) for level,state in [(x.split('.')[0],x.split('.')[2]) for x in pd_filtered_flow.index]]
-        pd_filtered_flow["orderState"]=[self.seriesOrder.index(i) for i in [x.split('.')[2] for x in pd_filtered_flow.index]]
+        pd_filtered_flow["orderLevel"]=[self.levelOrder[state].index(level) for level,state in [(x.split(self.sep)[0],x.split(self.sep)[1]) for x in pd_filtered_flow.index]]
+        pd_filtered_flow["orderState"]=[self.seriesOrder.index(i) for i in [x.split(self.sep)[1] for x in pd_filtered_flow.index]]
         pd_filtered_flow= pd_filtered_flow.sort_values(["orderState", "orderLevel"])
         #pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
         
@@ -1501,7 +1509,7 @@ class FlowAnalysis:
 
 
         if not ax2 is None:
-            flowScores_df_rounded=flowScores_df.with_column(
+            flowScores_df_rounded=flowScores_df.with_columns(
                 pl.col("pwscore").round(1)
             )
             counted_scores=flowScores_df_rounded.select("pwscore").to_series().value_counts()
@@ -1577,7 +1585,7 @@ class FlowAnalysis:
         ax2.set_title("Top {} memberships".format(n_genes))
         ax2.invert_yaxis()
 
-        flowScores_df=flowScores_df.with_column(
+        flowScores_df=flowScores_df.with_columns(
             pl.col("membership").round(1)
         )
         if plot_hist:
