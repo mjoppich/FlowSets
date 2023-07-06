@@ -347,7 +347,7 @@ class SankeyPlotter:
                 
         if not title is None:
             print("Adding title", title)
-            plt.title(title)
+            plt.title(title,fontsize = 30)
         
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
@@ -1481,9 +1481,9 @@ class FlowAnalysis:
                 ax2.grid(which='minor', color='#EBEBEB', linewidth=.1)
                 ax2.tick_params(axis="y",labelsize=labelsize)
                 ax2.axis(ymin=1)
-
         fig.tight_layout()
-        
+        plt.xlim([-0.05, 1.05])
+
         if not outfile is None:
             plt.savefig(outfile + ".png", bbox_inches='tight')
             plt.savefig(outfile + ".pdf", bbox_inches='tight')
@@ -1493,7 +1493,7 @@ class FlowAnalysis:
 
 
     def plot_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=0.0001,parallel=True):
-        flowScores_df=self.calc_flow_memberships(use_flows,genes=genes)
+        flowScores_df=self.calc_flow_memberships(use_flows,genes=genes,parallel=parallel)
         return self.make_plot_flow_memberships(flowScores_df,n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize)
 
 
@@ -1633,14 +1633,14 @@ class FlowAnalysis:
     
         pattern_membership=sum(end_memberships.values())
         flowScores_df=pl.DataFrame({self.symbol_column:flowDF[self.symbol_column], 'pwscore':pattern_membership})
-
+        used_flows=[x[0] for x in weightSequence_before if x[1][2] >0]
 
         if backtracking:
             backtracking_memberships={}
             #backtracking_memberships=backtracking_memberships.update(end_memberships)
             #print(backtracking_memberships)
 
-            selected_edges=[Cflowid2flow[x] for x in use_flows ]
+            selected_edges=[Cflowid2flow[x] for x in used_flows ]
             start_nodes=[x[0] for x  in selected_edges]
             target_nodes=[x[1] for x  in selected_edges]
             for i in reversed(range(len(allSeries) - 1)):
@@ -1663,7 +1663,7 @@ class FlowAnalysis:
                 for comb1 in reversed(self.levelOrder[tgtSeries]):
                     #print(tgtSeries,comb1)
 
-                    fids= [list(use_flows)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
+                    fids= [list(used_flows)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
                     edges=[Cflowid2flow[x] for x in fids]
                     nodes=[x[0] for x  in edges]
 
@@ -1708,7 +1708,7 @@ class FlowAnalysis:
                                         )
                             
             #print(weightSequence_after)
-            SankeyPlotter._make_plot(weightSequence_after, self.series2name, self.levelOrder, self.seriesOrder)
+            SankeyPlotter._make_plot(weightSequence_after, self.series2name, self.levelOrder, self.seriesOrder,independentEdges=True)
 
         return flowScores_df
                         
@@ -2110,6 +2110,62 @@ class FlowAnalysis:
         allFGDFs = pd.concat(allDFs, axis=0)
         allFGDFs = self._calculate_pvalues(allFGDFs)
 
+        return allFGDFs
+
+    def analyse_pathways_coarse(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
+
+        pathways = self.get_pathways(pathways_file)
+            
+        if not additional_pathways is None:
+            for pname, pgenes in additional_pathways:
+                pathways[pname] = (pname, pgenes)
+
+
+
+        flowMembership=self.calc_coarse_flow_memberships(use_flows=use_flows)
+
+        allPathwayGenes = set()
+        for x in pathways:
+            pwname, pwGenes = pathways[x]
+            for gene in pwGenes:
+                allPathwayGenes.add(gene)
+
+        flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
+        systemMemberships=self.calc_coarse_flow_memberships(use_flows=None)
+
+        allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["pwscore"].sum()
+        totalFlowMembership=flowMembership["pwscore"].sum()
+        outData = defaultdict(list)
+
+        for pwID in pathways:
+
+            pwName, pwGenes = pathways[pwID]
+            pwGenes = list(pwGenes)
+            inflow_inset = list(flowGenes.intersection(pwGenes))
+
+            pathwayMembership = flowMembership.filter(pl.col(self.symbol_column).is_in(pwGenes))["pwscore"].sum()
+            flowInPathwayScore = systemMemberships.filter(pl.col(self.symbol_column).is_in(pwGenes))["pwscore"].sum()
+            
+            genes_coverage = pathwayMembership / totalFlowMembership if totalFlowMembership > 0 else 0
+            pathway_coverage = pathwayMembership / len(pwGenes) if len(pwGenes) > 0 else 0
+
+
+            outData["pwid"].append(pwID)
+            outData["pwname"].append(pwName)
+            outData["pwFlow"].append(flowInPathwayScore)
+            outData["pwGenes"].append(len(pwGenes))
+            outData["allPwFlow"].append(totalFlowMembership)
+            outData["allPwGenes"].append(allPWGeneMemberships)
+
+            outData["pw_gene_intersection"].append(len(inflow_inset))
+            outData["pw_coverage"].append(pathway_coverage)
+            outData["genes_coverage"].append(genes_coverage)
+
+            outData["mean_coverage"].append(pathway_coverage*genes_coverage)
+
+        outdf = pd.DataFrame.from_dict(outData)       
+        allFGDFs = self._calculate_pvalues(outdf, set_size_threshold=set_size_threshold)
+                
         return allFGDFs
 
     def analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
