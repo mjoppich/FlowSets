@@ -22,6 +22,7 @@ from matplotlib.cm import ScalarMappable, hsv, get_cmap
 import seaborn as sns
 import matplotlib.patches as patches
 import matplotlib.colors as mcolors
+from matplotlib.ticker import ScalarFormatter
 
 import colorsys
 
@@ -695,15 +696,13 @@ def to_arg_max(df, exprMFs):
 
 
 
-def filter_weightSequence(weightSequence,cutoff=None):
-    if not cutoff is None and cutoff > 0:
-        return [x for x in weightSequence if x[1][-1] > cutoff]
-    else:
-        return weightSequence
+
 
 
 def top_weightSequence(weightSequence,top=10):
     return [weightSequence[i] for i in range(top)]
+
+
 def confusion_matrix(Trues,Results,All,outfile=None):
     Trues=set(Trues)
     Results=set(Results)
@@ -725,6 +724,23 @@ def confusion_matrix(Trues,Results,All,outfile=None):
     return(confusion_matrix)
 
 class FlowAnalysis:
+
+    @classmethod
+    def _filter_weightSequence(cls, weightSequence,cutoff=None):
+        """Filters weight sequence for sequences with weight > cutoff.
+
+        Args:
+            weightSequence (list): weight sequence
+            cutoff (float, optional): cutoff for filter. Defaults to None.
+
+        Returns:
+            list: filtered weightSequence
+        """
+        if not cutoff is None and cutoff > 0:
+            return [x for x in weightSequence if x[1][-1] > cutoff]
+        else:
+            return weightSequence
+    
 
     @classmethod
     def make_fuzzy_concepts(cls, exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=None, shape="tri", series = None, perSeriesFuzzy=False, **kwargs):
@@ -1042,6 +1058,8 @@ class FlowAnalysis:
         for state in self.exprMF:
             self.levelOrder[state] = [x for x in self.exprMF[state].terms]
             
+        self._edgeid2flow = None            
+            
         notEqualLevelOrder = False
         for state1 in self.exprMF:
             for state2 in self.exprMF:
@@ -1051,32 +1069,8 @@ class FlowAnalysis:
             print("WARNING: Your level orders are not equal. Scales in some plots may not reflect this appropriately.")
         
 
-    @property
-    def flowid2flow(self):
-        
-        if not hasattr(self,"_flowid2flow"):
-            print("Creating FlowIDs")
-            self._flowid2flow = {}
-            
-            def createFlows(states):
-                if len(states) == 0:
-                    return [[]]
-                
-                rems = createFlows(states[1:])
-                curstate = states[0]
-                rets = []
-                for level in self.levelOrder[curstate]:
-                    for exflow in rems:
-                        flow = [(curstate, level)] + exflow
-                        rets.append(flow)                
-                return rets               
-            
-            for flow in createFlows(self.seriesOrder):
-                self._flowid2flow[len(self._flowid2flow)] = flow
-                
-                
-        return self._flowid2flow
 
+    # TODO - wozu?
     def prepare_flows(self, flowDF=None):
 
         if flowDF is None:
@@ -1099,39 +1093,31 @@ class FlowAnalysis:
         return flowgroup_flow, flowgroup_route, flowgroup_genes
 
 
-    def create_series_color_map(self, seriesColors, mode="scaling"):
-        if seriesColors is None:
-            seriesColors = {}
-            for si, x in enumerate(self.series2name):
-                seriesColors[self.series2name[x]] = plt.get_cmap("viridis")(si/len(self.series2name))
-        seriesColorMap = {}
-        for x in seriesColors:
-            scmap = SankeyPlotter.createColorMap(seriesColors[x], mode)
-            seriesColorMap[x] = scmap
-            
-        return seriesColorMap
 
-    def plot_flows(self, use_flows = None, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts = lambda x: np.sqrt(x), verbose=False, seriesColors=None, colorMode="scaling"):
-
-        if use_flows is None:
-            use_flows = [x for x in self.flowid2flow]
-
-        weightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows)
-
-        weightSequence = filter_weightSequence(weightSequence, min_flow)          
-                    
-        if verbose:
-            for x in weightSequence:
-                print(x)
-
-        if not seriesColors is None:
-            seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
-        else:
-            seriesColorMap=None
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile, verbose=verbose, seriesColorMap=seriesColorMap)
+    #
+    ##
+    ### EDGE BASED
+    ##
+    #
 
 
-    def plot_coarse_flows(self, use_flows = None, genes=None,figsize=None, outfile=None, min_flow=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title=None):
+    def plot_flows(self, use_flows:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None):
+        """Plots the FlowSets system as sankey plot.
+
+        Args:
+            use_flows (set, optional): Restricts the system to only selected flows. Defaults to None.
+            genes (list, optional): Only considers specified genes. Defaults to None.
+            figsize (tuple, optional): Tuple (width, height) of figure. Defaults to None.
+            outfile (str, optional): Path to file to save plot in. Defaults to None.
+            min_flow (float, optional): Remove all edges with less membership. Defaults to None.
+            transformCounts (_type_, optional): Function to transform weights with for plotting. Defaults to lambdax:x.
+            verbose (bool, optional): Verbose output. Defaults to False.
+            specialColors (_type_, optional): _description_. Defaults to None.
+            sns_palette (str, optional): Color-palette to use for coloring states. Defaults to "icefire".
+            seriesColors (dict, optional): Dictionary with seriesname to color. Defaults to None.
+            colorMode (str, optional): Which coloring mode for states. Either scaling or diverging. Defaults to "scaling".
+            title (str, optional): Title of the plot. Defaults to None.
+        """
         
         
         if genes is None:
@@ -1139,45 +1125,15 @@ class FlowAnalysis:
         else:
             flowDF=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
-
-        allSeries = [x for x in self.series2name]
-        Cflowid2flow = {}
-        for i in range(len(allSeries) - 1):
-            
-            srcSeries = allSeries[i]
-            tgtSeries = allSeries[i+1]
-        
-            for comb in list(itertools.product(
-                reversed(self.levelOrder[srcSeries]),
-                reversed(self.levelOrder[tgtSeries])
-                )):
-                largeComp = [x for x in zip([allSeries[i],allSeries[i+1]], comb)]          
-                Cflowid2flow[len(Cflowid2flow)] = largeComp
         
         if use_flows is None:
-            use_flows = [x for x in Cflowid2flow]
-        weightSequence = []
+            use_flows = [x for x in self.edgeid2flow]
+        
+            
+        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(use_flows=use_flows, genes=genes,backtracking=True)
+        weightSequence = self._backtrack_coarse_flows(genes=genes, node_memberships=node_memberships, used_flows=used_flows)
 
-        for fgid in Cflowid2flow:
-
-            if not fgid in use_flows:
-                continue
-
-            flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in Cflowid2flow[fgid] ]
-            flowScoreDF = flowDF.select(
-                    pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-                    )
-            flowScore = flowScoreDF.sum()[0,0]
-
-
-            if not transformCounts is None:
-                flowScore = transformCounts(flowScore)
-
-            outlist = list(Cflowid2flow[fgid])
-            outlist.append(flowScore )
-            weightSequence.append(
-                        (fgid, outlist)
-                    )
+            
         if specialColors is None:
             indices=[w[0] for w in weightSequence ]
             startingnodes=[w[1][0][1] for w in weightSequence ]
@@ -1188,43 +1144,38 @@ class FlowAnalysis:
             maxLevels=len(levelColors.keys())
 
             colours=sns.color_palette(sns_palette,maxLevels)
-            # color each state transition:             c = [colours[j] for j in range(maxLevels) for i in range(int(len(indices)/maxLevels))  ]
-
-            # color end node transition:               c = [colours[j] for i in range(int(len(indices)/maxLevels)) for j in range(maxLevels) ]
-            # or  [colours[k] for j in range(len(self.seriesOrder)-1)  for i in range(maxLevels) for k in range(maxLevels) ]
-
-            # color every start node:            colours=sns.color_palette(sns_palette,max(int(len(indices)/maxLevels),maxLevels))     c = [colours[j] for j in range(int(len(indices)/maxLevels)) for i in range(maxLevels)  ]
-
-            # color start node transition:
-
-            #c = [colours[i] for j in range(len(self.seriesOrder)-1)  for i in range(maxLevels) for k in range(maxLevels) ]
 
             c=[colours[levelColors[s]] for s in startingnodes]
             specialColors=pd.DataFrame({
                 'values':c},
                 index=indices).to_dict()['values']
-        weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
+            
+        weightSequence = self._filter_weightSequence(weightSequence,cutoff=min_flow)
+        
         new_indices=[w[0] for w in weightSequence ]
         specialColors={k: v for k, v in specialColors.items() if k in new_indices}
-        
-        
+                
         if not seriesColors is None:
-            seriesColorMap = self.create_series_color_map(seriesColors, colorMode)
+            seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
         else:
             seriesColorMap=None
+            
         SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title)
 
 
 
     def hist_level_membershipsum(self):
+        """
+            Plots the membership sum for each state in each level.
+        """
 
         flowDF=self.flows
         colmeans=flowDF.select(pl.col(pl.Float64)).transpose(include_header=True).with_columns(
             pl.fold(0, lambda acc, s: acc + s, pl.all().exclude("column")).alias("horizontal_sum")
         )
                 
-        order1=[self.levelOrder[state].index(level) for level,state in [(x.split('.')[0],x.split('.')[2])  for x in colmeans.select(['column']).to_series()]]
-        order2=[self.series2name[i] for i in [x.split('.')[2] for x in colmeans.select(['column']).to_series()]]
+        order1=[self.levelOrder[state].index(level) for level,state in [(x.split( self.sep )[0],x.split( self.sep )[-1])  for x in colmeans.select(['column']).to_series()]]
+        order2=[self.series2name[i] for i in [x.split( self.sep )[-1] for x in colmeans.select(['column']).to_series()]]
 
         colmeans=colmeans.with_columns(pl.Series(name="order1", values=order1))
         colmeans=colmeans.with_columns(pl.Series(name="order2", values=order2))
@@ -1249,22 +1200,36 @@ class FlowAnalysis:
         ax.legend(title='State')
         fig.show()
         
+        
     def plot_state_memberships(self,genes,name="", cluster_genes=False, outfile=None, limits=(0,1), annot=True, annot_fmt=".2f", prefix="Cluster", verbose=False, figsize=(6,6), font_scale=0.4):
+        """Plots for the given genes, a matrix visualizing these genes' membership in each state and level.
+
+        Args:
+            genes (list): List of features to look at.
+            name (str, optional): Title of the plot. Defaults to "".
+            cluster_genes (boolean, optional): Whether the genes should be clustered by similarity in their expression pattern. Defaults to False.
+            outfile (str, optional): Path to save plot. Defaults to None.
+            limits (tuple, optional): Limits for the membership colormap. Defaults to (0,1).
+            annot (bool, optional): Whether to plot memberships into the cells. Defaults to True.
+            annot_fmt (str, optional): Str-format for memberships plotted into cells. Defaults to ".2f".
+            prefix (str, optional): Prefix for the states. Defaults to "Cluster".
+            verbose (bool, optional): Verbose output. Defaults to False.
+            figsize (tuple, optional): Size of the created figure. Defaults to (6,6).
+            font_scale (float, optional): Scale for the fonts shown in plot. Defaults to 0.4.
+
+        Returns:
+            seaborn clustermap: Clustermap object for further manipulation.
+        """
         
-        
-        #firstLevelOrder = self.levelOrder[list(self.levelOrder.keys())[0]]
         
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )      
         pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,1:].columns, index=filtered_flow[:,0].to_pandas().tolist())
         
-        pd_filtered_flow = pd_filtered_flow.transpose()
-                
-        # OR sort by states; switch hlines for correct white lines
-        #pd_filtered_flow=pd_filtered_flow.sort_index(ascending=False)
+        pd_filtered_flow = pd_filtered_flow.transpose()     
+        
         pd_filtered_flow["orderLevel"]=[self.levelOrder[state].index(level) for level,state in [(x.split(self.sep)[0],x.split(self.sep)[1]) for x in pd_filtered_flow.index]]
         pd_filtered_flow["orderState"]=[self.seriesOrder.index(i) for i in [x.split(self.sep)[1] for x in pd_filtered_flow.index]]
         pd_filtered_flow= pd_filtered_flow.sort_values(["orderState", "orderLevel"])
-        #pd_filtered_flow = pd_filtered_flow.drop(["order1","order2"], axis=1)
         
         col_order = ["orderLevel", "orderState"]+[x for x in genes if x in pd_filtered_flow.columns]
         pd_filtered_flow = pd_filtered_flow[col_order]
@@ -1343,62 +1308,81 @@ class FlowAnalysis:
         
         return g
 
-    def plot_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, use_flows=None, transformCounts=lambda x: np.sqrt(x)):
 
-        if not isinstance(genes, (tuple, list)):
-            genes = [genes]
 
-        #useFlows = self.flows.filter( self.flows["gene"].to_pandas().isin(genes).tolist())
-        useFlows = self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
-
-        weightSequence = self._to_weight_sequence( flows=useFlows, use_flows=use_flows)
-        weightSequence=filter_weightSequence(weightSequence,cutoff=min_flow)
-
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
 
 
     def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts=lambda x: np.sqrt(x)):
+        """Visualizes the selected genes in a different color within the system.
 
-        if not isinstance(genes, (tuple, list)):
+        Args:
+            genes (list): Genes to visualize.
+            figsize (tuple, optional): plot size. Defaults to None.
+            outfile (str, optional): path to write out plot. Defaults to None.
+            min_flow (float, optional): only plot edges with flow > min_flow. Defaults to None.
+            transformCounts (function, optional): function with which the counts are transformed for plotting. Defaults to lambdax:np.sqrt(x).
+        """
+
+        if not isinstance(genes, (tuple, list, set)):
             genes = [genes]
             
             
-        bgData = self.flows.filter( ~pl.col(self.symbol_column).is_in(genes) )
-        bgWeightSequence = self._to_weight_sequence( flows=bgData, use_flows=None, min_gene_flow=min_gene_flow)
-        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)
-        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
+                        
+        # full system
+        bgData = self.flows.filter( ~pl.col(self.symbol_column).is_in(genes) )    
+
+        print("Background")       
+        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=bgData, use_flows=None,genes=None,backtracking=True)
+        bgWeightSequence = self._backtrack_coarse_flows(flowDF=bgData, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        bgWeightSequence = self._filter_weightSequence(bgWeightSequence, min_flow)
 
         survivedFlows = [x[0] for x in bgWeightSequence]
         
         fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
-        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=None, min_gene_flow=min_gene_flow, flowIDMod=lambda x: x*(-1))
-        
-        fgWeightSequence = [x for x in fgWeightSequence if x[0]*(-1) in survivedFlows]
-        fgWeightSequence = filter_weightSequence(fgWeightSequence, min_flow)          
+       
+        print("Foreground")
+        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=fgData, use_flows=None,genes=None,backtracking=True)
+        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_flows=used_flows, edgeIDMod=lambda x: x*(-1))
+        fgWeightSequence = self._filter_weightSequence(fgWeightSequence, min_flow)
+
 
         specialColors = {x[0]: "red" for x in fgWeightSequence}
         
-        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile)
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True)
 
 
-    def visualize_genes(self, genes, figsize=None, min_flow=None, min_gene_flow=None, use_flows=None, title=None, outfile=None, score_modifier=lambda x: x):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x):
+        """Plots the flow system and colors edges by the genes' memberships.
 
-        if not isinstance(genes, (tuple, list)):
+        Args:
+            genes (list): list of genes
+            figsize (tuple, optional): Size of the plot. Defaults to None.
+            min_flow (float, optional): only plot edges with flow > min_flow. Defaults to None.
+            use_edges (list, optional): restrict edges of the system. Defaults to None.
+            title (str, optional): title of the plot. Defaults to None.
+            outfile (str, optional): path to save plot to. Defaults to None.
+            score_modifier (function, optional): Function to modify score with. Defaults to lambdax:x.
+        """
+
+        if not isinstance(genes, (tuple, list, set)):
             genes = [genes]
             
-        if use_flows is None:
-            use_flows = [x for x in self.flowid2flow]
+        if use_edges is None:
+            use_edges = [x for x in self.edgeid2flow]
             
             
         #bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
-        bgWeightSequence = self._to_weight_sequence( flows=self.flows, use_flows=use_flows, min_gene_flow=min_gene_flow)
-        
-        bgWeightSequence = filter_weightSequence(bgWeightSequence, min_flow)          
+        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=self.flows, use_flows=use_edges,genes=None,backtracking=True)
+        bgWeightSequence = self._backtrack_coarse_flows(flowDF=self.flows, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        bgWeightSequence = self._filter_weightSequence(bgWeightSequence, min_flow)
 
         
         fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
-        fgWeightSequence = self._to_weight_sequence( flows=fgData, use_flows=use_flows, min_gene_flow=min_gene_flow, flowIDMod=None)#lambda x: x*(-1))
-        
+
+        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=fgData, use_flows=use_edges,genes=None,backtracking=True)
+        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        fgWeightSequence = self._filter_weightSequence(fgWeightSequence, min_flow)
+
         for x in fgWeightSequence:
             x[1][-1] = score_modifier(x[1][-1])
             
@@ -1411,11 +1395,12 @@ class FlowAnalysis:
         norm = mpl.colors.Normalize(vmin=0, vmax=maxFlowValue)
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
-        SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title)
+        SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title, independentEdges=True)
                        
 
     def make_plot_flow_memberships(self,flowScores_df,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
-        flowScores_df=flowScores_df.sort(["pwscore",self.symbol_column],reverse=True)
+               
+        flowScores_df=flowScores_df.sort(["membership",self.symbol_column],descending=[True, False])
         if plot_histogram:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [4, 1]}, sharex=True)
         else:
@@ -1438,12 +1423,10 @@ class FlowAnalysis:
         
         # Style the grid.
         ax1.grid(which='major', color='#EBEBEB', linewidth=1)
-        #ax1.grid(which='minor', color='#EBEBEB', linewidth=0.6)
-            
-        #ax1.barh(range(n_genes),flowScores_df_top["pwscore"],color=colormap)
-
-        ax1.hlines(y=range(n_genes), xmin = 0 , xmax = flowScores_df_top["pwscore"], color=colormap)
-        ax1.plot(list(flowScores_df_top["pwscore"]), range(n_genes), "o")
+        
+        
+        ax1.hlines(y=range(n_genes), xmin = 0 , xmax = flowScores_df_top["membership"], color=colormap)
+        ax1.plot(list(flowScores_df_top["membership"]), range(n_genes), "o")
         ax1.set_yticks(range(n_genes),flowScores_df_top[self.symbol_column])
         ax1.tick_params(axis="y",labelsize=labelsize)
         ax1.set_title("Top "+str(n_genes)+" memberships",fontsize = labelsize)
@@ -1454,21 +1437,20 @@ class FlowAnalysis:
         ax1.xaxis.set_minor_locator(AutoMinorLocator(2))
         #ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
 
-        print(flowScores_df)
         if not ax2 is None:
             flowScores_df_rounded=flowScores_df.with_columns(
-                pl.col("pwscore").round(1)
+                pl.col("membership").round(1)
             )
-            counted_scores=flowScores_df_rounded.select("pwscore").to_series().value_counts()
+            counted_scores=flowScores_df_rounded.select("membership").to_series().value_counts()
 
             if violin:
                 sns.set_style('whitegrid')
                 #sns.kdeplot(x=np.array(flowScores_df["pwscore"]),ax=ax2)
-                sns.violinplot(x=np.array(flowScores_df["pwscore"]),ax=ax2,inner="stick")
+                sns.violinplot(x=np.array(flowScores_df["membership"]),ax=ax2,inner="stick")
                 ax2.set_title("Flow membership distribution")
                 ax2.set_xlim(0,1)
             else:
-                bars=ax2.bar(counted_scores['pwscore'], counted_scores['counts'], width = 0.1)
+                bars=ax2.bar(counted_scores['membership'], counted_scores['counts'], width = 0.1)
                 for rect in bars:
                     real_height=rect.get_height()
                     ax2.text(rect.get_x() + rect.get_width()/2., (real_height*.01).clip(min=2.5),
@@ -1489,237 +1471,218 @@ class FlowAnalysis:
             plt.savefig(outfile + ".pdf", bbox_inches='tight')
         
         plt.show()
-        return list(flowScores_df_top.select(pl.col(self.symbol_column)))[0].to_list(), flowScores_df, (ax1, ax2)
-
-
-    def plot_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=0.0001,parallel=True):
-        flowScores_df=self.calc_flow_memberships(use_flows,genes=genes,parallel=parallel)
-        return self.make_plot_flow_memberships(flowScores_df,n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize)
+        
+        if ax2 is None:
+            return flowScores_df_top, ax1
+        
+        return flowScores_df_top, ax1, ax2
+        
+        #return list(flowScores_df_top.select(pl.col(self.symbol_column)))[0].to_list(), flowScores_df, (ax1, ax2)
 
 
     
-    def calc_flow_memberships(self,use_flows,genes=None, n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=None,parallel=True):
-        flowDF=self.flows.clone()
+
+
+
+    def plot_coarse_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
         
-
-        if not genes is None:        
-            flowDF = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
+        flowScores_df = self.calc_coarse_flow_memberships(use_flows,genes=genes,backtracking=False)
         
-        flowScores = pl.DataFrame()
-
-        
-        def prepare_flow_calculation(self, flowDF,fgid):
-            flowCols, flow = self._get_flow_columns(fgid)
-
-            if not min_gene_flow is None:
-                flowDF=flowDF.filter(pl.all(pl.col(flowCols) > min_gene_flow))
-            flowScore_perGene = flowDF.select([self.symbol_column,
-                            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-                        ]       
-                        )
-            flowScore_perGene.columns=[self.symbol_column,str(fgid) ]
-
-        
-            return(flowScore_perGene)
-        
-        bar = makeProgressBar()
-
-        
-        if parallel:
-            
-            print("Starting Event Loop")
-            from joblib import Parallel, delayed, parallel_backend
-            with parallel_backend('loky', n_jobs=8):
-                results = Parallel()(delayed(prepare_flow_calculation)(self,flowDF, fgid) for fgid in bar(use_flows))
-            print("Event Loop Completed")
-            
-        else:
-            results=[]
-            for fgid in bar(use_flows):
-                results.append(prepare_flow_calculation(self,flowDF,fgid))
-
-
-        for idx, res in enumerate(results):
-                    
-            if flowScores.shape == (0,0):
-                flowScores=res
-            else:
-                flowScores=flowScores.join(res,on=self.symbol_column,how="outer")
-        
-        flowScores=flowScores.fill_null(0)  
-        ## here also coloring bars content from flows would be possible
-        flowScores_df= flowScores.select([self.symbol_column,
-                        pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
-                    ]       
-        )
-
-        return flowScores_df        
-        # list(flowScores_df_top.select(pl.col(self.symbol_column)))[0].to_list(), flowScores_df, (ax1, ax2)
-
-    def plot_coarse_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=0.0001,parallel=True,backtracking=False):
-        flowScores_df=self.calc_coarse_flow_memberships(use_flows,genes=genes,backtracking=backtracking)
         return self.make_plot_flow_memberships(flowScores_df,n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize)
 
 
-    def calc_coarse_flow_memberships(self,use_flows, genes=None,min_gene_flow=0.0001,backtracking=False):
+    def calc_coarse_flow_memberships(self, flowDF=None, use_flows=None, genes=None, backtracking=False):
+        """Calculates memberships of genes given flows as edgeIDs or genes.
 
+        Args:
+            use_flows (set, optional): Set of edgeIDs to consider. If None, all edges are considered. Defaults to None.
+            genes (list, optional): List of genes to consider. If None, all genes are considered. Defaults to None.
+            backtracking (bool, optional): If true, all data required for backtrack are returned. Defaults to False.
 
+        Returns:
+            polars.DataFrame: DataFrame which contains for each feature a membership
+        """
+        
+
+        if flowDF is None:
+            flowDF = self.flows
+            
         if not genes is None:        
             flowDF = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
-        else:
-            flowDF = self.flows
-        #print(flowDF)
+    
+
         allSeries = [x for x in self.series2name]
-        Cflowid2flow = {}
 
         node_memberships={}
         weightSequence_before = []
-        weightSequence_after=[]
-        for i in range(len(allSeries) - 1):
-                    
+        
+        for edgeID in self.edgeid2flow:
+            
+            largeComp = self.edgeid2flow[edgeID]
+            
+            src, tgt = largeComp
+            
+            srcSeries = src[0]
+            tgtSeries = tgt[0]
+            
+            srcLevel = src[1]
+            tgtLevel = tgt[1]
+            
+            i = allSeries.index(srcSeries)
+                   
             srcSeries = allSeries[i]
             tgtSeries = allSeries[i+1]
-
+            
+            # TODO this could be done too often
             if not srcSeries in node_memberships:
                 node_memberships[srcSeries]={}
                 for l in self.levelOrder[srcSeries]:
-                    node_memberships[srcSeries][l]=flowDF.select(pl.col("{}.cluster.{}".format(l, srcSeries))).to_series()
-                    #pl.Series([1]*flowDF.shape[0])
+                    colname = "{}{}{}".format(l, self.sep, srcSeries)
+                    node_memberships[srcSeries][l]=flowDF.select(pl.col(colname)).to_series()
 
 
+            # TODO this could be done too often
             if not tgtSeries in node_memberships: 
                 node_memberships[tgtSeries]={}
                 for l in self.levelOrder[tgtSeries]:
                     node_memberships[tgtSeries][l]=pl.Series([0]*flowDF.shape[0])
 
-            #print("-----")
-            #print(sum(node_memberships[srcSeries].values()))
-            #print(sum(node_memberships[tgtSeries].values()))
 
-            for comb in list(itertools.product(
-                reversed(self.levelOrder[srcSeries]),
-                reversed(self.levelOrder[tgtSeries])
-                )):
+            if not use_flows is None:
+                if not edgeID in use_flows:
+                    continue
 
+            flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in largeComp ]
+            
+            
+            temp_df=pl.DataFrame({
+                                    "start":node_memberships[srcSeries][ srcLevel ],
+                                    "target":node_memberships[tgtSeries][ tgtLevel ],
+                                    "factor":flowDF.select(pl.col(flowCols[1])).to_series()
+                                })
 
-
-                largeComp = [x for x in zip([allSeries[i],allSeries[i+1]], comb)]        
-                fgid=len(Cflowid2flow)
-                Cflowid2flow[fgid] = largeComp
-                if not use_flows is None:
-                    if not fgid in use_flows:
-                        continue
-
-                flowCols=["{}.cluster.{}".format(fclass, state) for state, fclass  in largeComp ]
-                #flowScoreDF = flowDF.select(
-                #            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
-                #            )
-                temp_df=pl.DataFrame({"start":node_memberships[srcSeries][comb[0]],"target":node_memberships[tgtSeries][comb[1]], "factor":flowDF.select(pl.col(flowCols[1])).to_series()   })
-                #"factor": flowScoreDF["pwscore"] })
-                temp_df=temp_df.with_columns([
-                    pl.map(["start", "target","factor"], lambda s: s[0] * s[2] ).alias("flow"),
-                    pl.map(["start", "target","factor"], lambda s:s[1] + s[0] * s[2] ).alias("pwscore")
-                ])           
-                node_memberships[tgtSeries][comb[1]]=temp_df['pwscore']
+            temp_df=temp_df.with_columns([
+                pl.map(["start", "target", "factor"], lambda s: s[0] * s[2] ).alias("flow"),
+                pl.map(["start", "target", "factor"], lambda s: s[1] + s[0] * s[2] ).alias("pwscore")
+            ])         
+                          
+            node_memberships[tgtSeries][ tgtLevel ]=temp_df['pwscore']
 
 
-                outlist = list(Cflowid2flow[fgid])
-                outlist.append(temp_df["flow"].sum() )
-                weightSequence_before.append(
-                                (fgid, outlist)
-                            )
+            outlist = list(largeComp)
+            outlist.append(temp_df["flow"].sum() )
+            weightSequence_before.append( (edgeID, outlist) )
 
-        end_memberships=node_memberships[allSeries[len(allSeries)-1 ] ]
+        end_memberships=node_memberships[allSeries[-1] ]
     
         pattern_membership=sum(end_memberships.values())
-        flowScores_df=pl.DataFrame({self.symbol_column:flowDF[self.symbol_column], 'pwscore':pattern_membership})
+        flowScores_df=pl.DataFrame({self.symbol_column:flowDF[self.symbol_column], 'membership':pattern_membership})
         used_flows=[x[0] for x in weightSequence_before if x[1][2] >0]
 
         if backtracking:
-            backtracking_memberships={}
-            #backtracking_memberships=backtracking_memberships.update(end_memberships)
-            #print(backtracking_memberships)
-
-            selected_edges=[Cflowid2flow[x] for x in used_flows ]
-            start_nodes=[x[0] for x  in selected_edges]
-            target_nodes=[x[1] for x  in selected_edges]
-            for i in reversed(range(len(allSeries) - 1)):
-
-                srcSeries = allSeries[i]
-                tgtSeries = allSeries[i+1]
-
-
-                if not srcSeries in backtracking_memberships:
-                    backtracking_memberships[srcSeries]={}
-                    for l in self.levelOrder[srcSeries]:
-                        backtracking_memberships[srcSeries][l]=pl.Series([0]*flowDF.shape[0])
-
-
-                if not tgtSeries in backtracking_memberships: 
-                    backtracking_memberships[tgtSeries]={}
-                    for l in self.levelOrder[tgtSeries]:
-                        backtracking_memberships[tgtSeries][l]=end_memberships[l]
-
-                for comb1 in reversed(self.levelOrder[tgtSeries]):
-                    #print(tgtSeries,comb1)
-
-                    fids= [list(used_flows)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
-                    edges=[Cflowid2flow[x] for x in fids]
-                    nodes=[x[0] for x  in edges]
-
-                    #print(edges)
-                    if len(edges)>0:
-                        flowCols=["{}.cluster.{}".format(fclass, state) for state, fclass  in nodes ]
-
-
-                        relative_flow=flowDF.select(pl.col(flowCols))
-
-                        relative_flow=relative_flow.with_column(
-                         pl.fold(0, lambda acc, s: acc + s,pl.all()).alias("horizontal_sum")
-                             )
-                        
-                        relative_flow=relative_flow.with_column(
-                            pl.all().exclude("horizontal_sum") / pl.col(("horizontal_sum"))
-                        )
-
-                        relative_flow=relative_flow.fill_nan(0)  
-
-
-                        for f in fids:
-                            node=Cflowid2flow[f][0]
-                            flowCol=node[1]+".cluster."+node[0]
-
-                            temp_df=pl.DataFrame({"start":backtracking_memberships[srcSeries][node[1]],"target":backtracking_memberships[tgtSeries][comb1], "factor":relative_flow.select(pl.col(flowCol)).to_series()   })
-                            #"factor": flowScoreDF["pwscore"] })
-
-                            #print(temp_df)
-                            temp_df=temp_df.with_columns([
-                                pl.map(["start", "target","factor"], lambda s: s[1] * s[2] ).alias("flow"),
-                                pl.map(["start", "target","factor"], lambda s:s[0] + s[1] * s[2] ).alias("pwscore")
-                            ])           
-                            backtracking_memberships[srcSeries][node[1]]=temp_df['pwscore']
-
-                            #print(f,temp_df["flow"].sum() )
-
-                            outlist = list(Cflowid2flow[f])
-                            outlist.append(temp_df["flow"].sum() )
-                            weightSequence_after.append(
-                                            (f, outlist)
-                                        )
-                            
-            #print(weightSequence_after)
-            SankeyPlotter._make_plot(weightSequence_after, self.series2name, self.levelOrder, self.seriesOrder,independentEdges=True)
+            return flowScores_df, node_memberships, used_flows
 
         return flowScores_df
                         
+    def _backtrack_coarse_flows(self, node_memberships, used_flows, flowDF=None, genes=None, edgeIDMod=None):
+        
+        allSeries = [x for x in self.series2name]
+        
+        if flowDF is None:
+            flowDF = self.flows
+            
+        if not genes is None:        
+            flowDF = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
+    
+
+        numGenes = flowDF.shape[0]
+        end_memberships=node_memberships[allSeries[-1] ]
+        
+        
+        backtracking_memberships={}
+        weightSequence_after = []
+
+        selected_edges=[self.edgeid2flow[x] for x in used_flows ]
+        start_nodes=[x[0] for x  in selected_edges]
+        target_nodes=[x[1] for x  in selected_edges]
+        for i in reversed(range(len(allSeries) - 1)):
+
+            srcSeries = allSeries[i]
+            tgtSeries = allSeries[i+1]
+
+
+            if not srcSeries in backtracking_memberships:
+                backtracking_memberships[srcSeries]={}
+                for l in self.levelOrder[srcSeries]:
+                    backtracking_memberships[srcSeries][l]=pl.Series([0]* numGenes)
+
+
+            if not tgtSeries in backtracking_memberships: 
+                backtracking_memberships[tgtSeries]={}
+                for l in self.levelOrder[tgtSeries]:
+                    backtracking_memberships[tgtSeries][l]=end_memberships[l]
+
+            for comb1 in reversed(self.levelOrder[tgtSeries]):
+
+                edgeIDs= [list(used_flows)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
+                edges=[self.edgeid2flow[x] for x in edgeIDs]
+                nodes=[x[0] for x  in edges]
+
+                #print(edges)
+                if len(edges)>0:
+                    flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in nodes ]
+
+
+                    relative_flow=flowDF.select(pl.col(flowCols))
+
+                    relative_flow=relative_flow.with_columns(
+                        pl.fold(0, lambda acc, s: acc + s,pl.all()).alias("horizontal_sum")
+                            )
+                    
+                    relative_flow=relative_flow.with_columns(
+                        pl.all().exclude("horizontal_sum") / pl.col(("horizontal_sum"))
+                    )
+
+                    relative_flow=relative_flow.fill_nan(0)  
+
+
+                    for edgeID in edgeIDs:
+                        node=self.edgeid2flow[edgeID][0]
+                        flowCol= "{}{}{}".format(node[1], self.sep, node[0]) #  node[1]+".cluster."+node[0]
+                        
+                        temp_df=pl.DataFrame({
+                                              "start":backtracking_memberships[srcSeries][node[1]],
+                                              "target":backtracking_memberships[tgtSeries][comb1],
+                                              "factor":relative_flow.select(pl.col(flowCol)).to_series()
+                                              })
+
+                        #print(temp_df)
+                        temp_df=temp_df.with_columns([
+                            pl.map(["start", "target", "factor"], lambda s: s[1] * s[2] ).alias("flow"),
+                            pl.map(["start", "target", "factor"], lambda s:s[0] + s[1] * s[2] ).alias("membership")
+                        ])           
+                        backtracking_memberships[srcSeries][node[1]]=temp_df['membership']
+
+                        outlist = list(self.edgeid2flow[edgeID])
+                        outlist.append(temp_df["flow"].sum() )
+                        
+                        if not edgeIDMod is None:
+                            edgeID = edgeIDMod(edgeID)
+                        
+                        weightSequence_after.append(
+                                        (edgeID, outlist)
+                                    )
+            
+        return weightSequence_after               
+
+            #SankeyPlotter._make_plot(weightSequence_after, self.series2name, self.levelOrder, self.seriesOrder,independentEdges=True)
 
 
 
 
 
 
-
-
+    # TODO wozu
     def get_confusion_matrix(self,scores_df,Trues,num_true=None,outfile=None):
         if not num_true is None:
             scores_df=scores_df[:num_true]
@@ -1729,101 +1692,170 @@ class FlowAnalysis:
         All=list(self.flows.select(pl.col(self.symbol_column)))[0].to_list()
         cm=confusion_matrix(Trues,Results,All,outfile)
 
-
         print(cm)
-
-    def plot_genes_membership(self,genes, n_genes=30,use_flows=None,plot_hist=False, outfile=None):
-        genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
-        if use_flows is None:
-            use_flows = [x for x in self.flowid2flow]
-
-        weightSequence = self._to_weight_sequence( flows=genes_flow, use_flows=use_flows)
-
-        fgid=[x[0] for x in weightSequence]
-        membership=[x[1][-1] for x in weightSequence]
-
-        flowScores_df=pl.DataFrame({'fgid':fgid, 'membership':membership})
-
-        flowScores_df=flowScores_df.sort("membership",reverse=True)
-        fig, (ax1, ax2) = plt.subplots(1, 2)
-        
-        n_genes = min(n_genes, flowScores_df.shape[0])
-        
-        ax2.barh(range(n_genes),flowScores_df["membership"][range(n_genes)])
-        
-        flowIDList = list(flowScores_df["fgid"][range(n_genes)])
-               
-        ax2.set_yticks(range(n_genes),[" -> ".join([str("+".join(x)) for x in self.flowid2flow[y]]) for y in flowIDList])
-        
-        
-        ax2.tick_params(axis="y",labelsize=4)
-        ax2.set_title("Top {} memberships".format(n_genes))
-        ax2.invert_yaxis()
-
-        flowScores_df=flowScores_df.with_columns(
-            pl.col("membership").round(1)
-        )
-        if plot_hist:
-            counted_scores=flowScores_df.select("membership").to_series().value_counts()
-            #print(counted_scores)
-            ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
-            ax1.set_title("Binned membership histogram")
-        else:
-            ax1.axis('off')
-
-        
-        if not outfile is None:
-            plt.savefig(outfile + ".png", bbox_inches='tight')
-            plt.savefig(outfile + ".pdf", bbox_inches='tight')
-        
-        plt.show()
 
 
     
-    def _get_flow_columns(self, flowID):
+    @property
+    def edgeid2flow(self):
         
-        flow = self.flowid2flow[flowID]
-        # flow = [('control', 'NO'), ('sepsis', 'LOW')]
-        
-        flowCols = ["{}.cluster.{}".format(y,x) for x,y in flow]
-        #flowCols = ['NO.cluster.control', 'LOW.cluster.sepsis']
-        
-        return flowCols, flow
+        if self._edgeid2flow is None:
+            self._edgeid2flow = {}
+            allSeries = [x for x in self.series2name]
 
-    def _to_weight_sequence(self, flows, use_flows=None, flowIDMod=None, min_gene_flow=None):
-        """Generates weight-sequence for plotting flows
+            for i in range(len(allSeries) - 1):
+
+                srcSeries = allSeries[i]
+                tgtSeries = allSeries[i+1]
+
+                for comb in list(itertools.product(
+                    reversed(self.levelOrder[srcSeries]),
+                    reversed(self.levelOrder[tgtSeries]) )):
+                            
+                            largeComp = [x for x in zip([allSeries[i],allSeries[i+1]], comb)]        
+                            fgid=len(self._edgeid2flow)
+                            self._edgeid2flow[fgid] = largeComp
+                            
+        return self._edgeid2flow
+    
+
+    def flow_finder( self, pattern:list, minLevels:list=None, maxLevels:list=None, verbose=True ):
+        """Select flow according to a specific pattern with minimal and maximal levels per state.
 
         Args:
-            flows (pl.DataFrame): Flow-Dataframe used for plotting
-            use_flows (list, optional): flows to consider. Defaults to None. If None, all Flows will be plotted
-            flowIDMod (lambda, optional): if not None, applied to all flow ID results
+            pattern (list): pattern between states
+            minLevels (list, optional): Minimal levels per state. None for no restriction. Defaults to None.
+            maxLevels (list, optional): Maximal levels per state. None for no restriction. Defaults to None.
+            verbose (bool, optional): Verbose output. Defaults to True.
 
         Returns:
-            list: weight-sequence
+            set: set of matching edge ids
         """
         
 
-        if use_flows is None:
-            use_flows = [x for x in self.flowid2flow]
-        
-        weightSequence = []
-        for fgid in use_flows:            
-            # (fgid, [(("WT", 2), ("KO", 0), 1), .... )]
-            flowScore, flow = self._calculate_flow_score(flows, fgid, min_gene_flow=min_gene_flow)
-            
-            if not flowIDMod is None:
-                fgid = flowIDMod(fgid)
-            #print(fgid, flow, flowScore)
-            
-            outlist = list(flow)
-            outlist.append(flowScore )
-            weightSequence.append(
-                (fgid, outlist)
-            )
-                                    
-        return weightSequence
+        allSeries = [x for x in self.series2name]
+        matchingFIDs = set()
 
-    def flow_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
+        if minLevels is None:
+            minLevels=[None]*len(allSeries)
+        if maxLevels is None:
+            maxLevels=[None]*len(allSeries)
+            
+            
+        for edgeID in self.edgeid2flow:
+            
+            src, tgt = self.edgeid2flow[edgeID]
+            
+            srcSeries = src[0]
+            tgtSeries = tgt[0]
+            
+            srcLevel = src[1]
+            tgtLevel = tgt[1]
+            
+            i = allSeries.index(srcSeries)
+            comp = pattern[ i ]
+
+            startIdx = self.levelOrder[srcSeries].index(srcLevel)
+            endIdx = self.levelOrder[tgtSeries].index(tgtLevel)
+
+            if not minLevels[i] is None:
+
+                if startIdx<self.levelOrder[srcSeries].index(minLevels[i]):
+                    continue
+            if not minLevels[i+1] is None:
+                if endIdx<self.levelOrder[tgtSeries].index(minLevels[i+1]):
+                    continue
+            if not maxLevels[i] is None:
+                if startIdx>self.levelOrder[srcSeries].index(maxLevels[i]):
+                    continue
+            if not maxLevels[i+1] is None:
+                if endIdx>self.levelOrder[tgtSeries].index(maxLevels[i+1]):
+                    continue
+
+            if comp == "<":
+                if not startIdx < endIdx:
+                    continue
+            elif comp == "<<":
+                if not startIdx+1 < endIdx:
+                    continue
+            elif comp == "<=":
+                if not startIdx <= endIdx:
+                    continue
+            elif comp == ">=":
+                if not startIdx >= endIdx:
+
+                    continue
+            elif comp == ">":
+                if not startIdx > endIdx:
+                    continue
+            elif comp == ">>":
+                if not startIdx > endIdx+1:
+                    continue
+            elif comp == "=":
+                if not startIdx == endIdx:
+                    continue
+            elif comp == "x":
+                #change
+                if startIdx == endIdx:
+                    continue
+            elif comp == "~":
+                #circa
+                if not (startIdx == endIdx or startIdx == endIdx+1 or startIdx == endIdx -1) :
+                    continue
+            elif comp == "?":
+                #always accept
+                pass
+
+
+            if verbose:
+                print(edgeID, (src, tgt))
+                
+            matchingFIDs.add(edgeID)
+
+        return matchingFIDs
+
+
+
+
+
+
+
+
+
+    #
+    ##
+    ### PATH BASED
+    ##
+    #
+
+    @property
+    def flowid2flow(self):
+        
+        if not hasattr(self,"_flowid2flow"):
+            print("Creating FlowIDs")
+            self._flowid2flow = {}
+            
+            def createFlows(states):
+                if len(states) == 0:
+                    return [[]]
+                
+                rems = createFlows(states[1:])
+                curstate = states[0]
+                rets = []
+                for level in self.levelOrder[curstate]:
+                    for exflow in rems:
+                        flow = [(curstate, level)] + exflow
+                        rets.append(flow)                
+                return rets               
+            
+            for flow in createFlows(self.seriesOrder):
+                self._flowid2flow[len(self._flowid2flow)] = flow
+                
+                
+        return self._flowid2flow
+
+
+    def path_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
 
         firstState = list(self.exprMF.keys())[0]
         seriesOrder = list(self.exprMF[firstState].terms.keys())
@@ -1907,294 +1939,110 @@ class FlowAnalysis:
                 matchingFIDs.add(fid)
 
         return matchingFIDs
-    
-
-    def coarse_flow_finder( self, sequence, minLevels=None, maxLevels=None, verbose=True ):
-
-        allSeries = [x for x in self.series2name]
-        matchingFIDs = set()
-        Cflowid2flow = {}
 
 
-        if minLevels is None:
-            minLevels=[None]*len(allSeries)
-        if maxLevels is None:
-            maxLevels=[None]*len(allSeries)
+    def _paths_to_weight_sequence(self, flows, use_flows=None, flowIDMod=None, min_gene_flow=None):
+        """Generates weight-sequence for plotting flows
 
-        for i in range(len(allSeries) - 1):
+        Args:
+            flows (pl.DataFrame): Flow-Dataframe used for plotting
+            use_flows (list, optional): flows to consider. Defaults to None. If None, all Flows will be plotted
+            flowIDMod (lambda, optional): if not None, applied to all flow ID results
 
-            comp=sequence[i]
-            srcSeries = allSeries[i]
-            tgtSeries = allSeries[i+1]
-
-            for comb in list(itertools.product(
-                reversed(self.levelOrder[srcSeries]),
-                reversed(self.levelOrder[tgtSeries]) )):
-                        
-                        largeComp = [x for x in zip([allSeries[i],allSeries[i+1]], comb)]        
-                        fgid=len(Cflowid2flow)
-                        Cflowid2flow[fgid] = largeComp
-
-                        startIdx = self.levelOrder[srcSeries].index(comb[0])
-                        endIdx = self.levelOrder[tgtSeries].index(comb[1])
-
-                        if not minLevels[i] is None:
-
-                            if startIdx<self.levelOrder[srcSeries].index(minLevels[i]):
-                                continue
-                        if not minLevels[i+1] is None:
-                            if endIdx<self.levelOrder[tgtSeries].index(minLevels[i+1]):
-                                continue
-                        if not maxLevels[i] is None:
-                            if startIdx>self.levelOrder[srcSeries].index(maxLevels[i]):
-                                continue
-                        if not maxLevels[i+1] is None:
-                            if endIdx>self.levelOrder[tgtSeries].index(maxLevels[i+1]):
-                                continue
-
-                        if comp == "<":
-                            if not startIdx < endIdx:
-                                continue
-                        elif comp == "<<":
-                            if not startIdx+1 < endIdx:
-                                continue
-                        elif comp == "<=":
-                            if not startIdx <= endIdx:
-                                continue
-                        elif comp == ">=":
-                            if not startIdx >= endIdx:
-
-                                continue
-                        elif comp == ">":
-
-                            if not startIdx > endIdx:
-                                continue
-                        elif comp == ">>":
-                            if not startIdx > endIdx+1:
-                                continue
-                        elif comp == "=":
-                            if not startIdx == endIdx:
-                                continue
-                        elif comp == "~":
-                            #circa
-                            if not (startIdx == endIdx or startIdx == endIdx+1 or startIdx == endIdx -1) :
-                                continue
-                        elif comp == "?":
-                            #always accept
-                            pass
-
-
-                        if verbose:
-                            print(fgid, largeComp)
-                        matchingFIDs.add(fgid)
-
-        return matchingFIDs
-
-
-    def read_gmt_file(self, filepath):
-
-        geneset2genes = {}
-
-        with open(filepath) as fin:
-
-            for line in fin:
-
-                line = line.strip().split("\t")
-                pwName = line[0]
-                pwID = line[1]
-                pwGenes = line[2:]
-                pwGenes = [x.upper() for x in pwGenes]
-
-                geneset2genes[pwID] = (pwName, pwGenes)
-
-        return geneset2genes
-    
-    def read_gaf_file(self, filepath):
-
-        geneset2genes = defaultdict(set)
-        geneset2name = {}
-
-        with open(filepath) as fin:
-
-            for line in fin:
-                
-                if line.startswith("!"):
-                    continue
-
-                line = line.strip().split("\t")
-                pwName = line[4]
-                pwID = line[4]
-                pwGene = line[2].upper()
-                
-                geneset2name[pwID] = pwName
-                geneset2genes[pwID].add(pwGene)
-                
-        output = {}
-        for x in geneset2name:
-            output[x] = (x, geneset2genes[x])
-
-        return output
-
-    def get_pathways(self, pathways_file):
+        Returns:
+            list: weight-sequence
+        """
         
-        print("Loading pathways from", pathways_file)
+
+        if use_flows is None:
+            use_flows = [x for x in self.flowid2flow]
         
-        if pathways_file.endswith("gmt"):
-            rp = self.read_gmt_file(pathways_file)
-        elif pathways_file.endswith("gaf"):
-            rp = self.read_gaf_file(pathways_file)
+        weightSequence = []
+        for fgid in use_flows:            
+            # (fgid, [(("WT", 2), ("KO", 0), 1), .... )]
+            flowScore, flow = self._calculate_flow_score_for_paths(flows, fgid, min_gene_flow=min_gene_flow)
+            
+            if not flowIDMod is None:
+                fgid = flowIDMod(fgid)
+            #print(fgid, flow, flowScore)
+            
+            outlist = list(flow)
+            outlist.append(flowScore )
+            weightSequence.append(
+                (fgid, outlist)
+            )
+                                    
+        return weightSequence
+
+    def plot_genes_membership(self,genes, n_genes=30,use_flows=None,plot_hist=False, outfile=None):
+        genes_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
+        
+        
+        if use_flows is None:
+            use_flows = [x for x in self.flowid2flow]
+
+        weightSequence = self._paths_to_weight_sequence( flows=genes_flow, use_flows=use_flows)
+
+        fgid=[x[0] for x in weightSequence]
+        membership=[x[1][-1] for x in weightSequence]
+
+        flowScores_df=pl.DataFrame({'fgid':fgid, 'membership':membership})
+
+        flowScores_df=flowScores_df.sort("membership",reverse=True)
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        
+        n_genes = min(n_genes, flowScores_df.shape[0])
+        
+        ax2.barh(range(n_genes),flowScores_df["membership"][range(n_genes)])
+        
+        flowIDList = list(flowScores_df["fgid"][range(n_genes)])
+               
+        ax2.set_yticks(range(n_genes),[" -> ".join([str("+".join(x)) for x in self.flowid2flow[y]]) for y in flowIDList])
+        
+        
+        ax2.tick_params(axis="y",labelsize=4)
+        ax2.set_title("Top {} memberships".format(n_genes))
+        ax2.invert_yaxis()
+
+        flowScores_df=flowScores_df.with_columns(
+            pl.col("membership").round(1)
+        )
+        if plot_hist:
+            counted_scores=flowScores_df.select("membership").to_series().value_counts()
+            #print(counted_scores)
+            ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
+            ax1.set_title("Binned membership histogram")
         else:
-            raise ValueError("Invalid File Format")
+            ax1.axis('off')
+
         
-        print("Identified", len(rp), "pathways")
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
         
-        return rp
+        plt.show()
 
-
-    def analyse_pathways(self, pathways_file="ReactomePathways.gmt", additional_pathways=None, use_flows=None, parallel=True):
-
-        rp = self.get_pathways(pathways_file)
-        
-        if not additional_pathways is None:
-            for pname, pgenes in additional_pathways:
-                rp[pname] = (pname, pgenes)
-
-        allDFs = []
-
-        bar = makeProgressBar()
+    def plot_paths(self, use_flows = None, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts = lambda x: np.sqrt(x), verbose=False, seriesColors=None, colorMode="scaling"):
 
         if use_flows is None:
             use_flows = [x for x in self.flowid2flow]
 
+        weightSequence = self._paths_to_weight_sequence( flows=self.flows, use_flows=use_flows)
+        weightSequence = self._filter_weightSequence(weightSequence, min_flow)          
+                    
+        if verbose:
+            for x in weightSequence:
+                print(x)
 
-        if parallel:
-            
-            
-            def prepare_flow_analysis_df(fa, fgid):
-                flowCols, _ = fa._get_flow_columns(fgid)
-                flowDF = fa.flows.select(pl.col(flowCols + [fa.symbol_column]))
-                        
-                df = fa.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=fa.flows, considerFlows=[fgid])
-                df["fgid"] = fgid
-                return df
-            
-            
-            print("Starting Event Loop")
-            from joblib import Parallel, delayed, parallel_backend
-            
-            with parallel_backend('loky', n_jobs=8):
-                results = Parallel()(delayed(prepare_flow_analysis_df)(self, fgid) for fgid in use_flows)
-
-                for idx, res in enumerate(results):
-                    allDFs.append(res)
-            
-            print("Event Loop Completed")
-            
-            
+        if not seriesColors is None:
+            seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
         else:
-
-            for fgid in bar(use_flows):
-                
-                flowCols, _ = self._get_flow_columns(fgid)
-                flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
-                        
-                df = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
-                df["fgid"] = fgid
-
-                #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
-
-                allDFs.append(df)
-
-
-
-        allFGDFs = pd.concat(allDFs, axis=0)
-        allFGDFs = self._calculate_pvalues(allFGDFs)
-
-        return allFGDFs
-
-    def analyse_pathways_coarse(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
-
-        pathways = self.get_pathways(pathways_file)
+            seriesColorMap=None
             
-        if not additional_pathways is None:
-            for pname, pgenes in additional_pathways:
-                pathways[pname] = (pname, pgenes)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, transformCounts=transformCounts, fsize=figsize, outfile=outfile, verbose=verbose, seriesColorMap=seriesColorMap)
 
 
-
-        flowMembership=self.calc_coarse_flow_memberships(use_flows=use_flows)
-
-        allPathwayGenes = set()
-        for x in pathways:
-            pwname, pwGenes = pathways[x]
-            for gene in pwGenes:
-                allPathwayGenes.add(gene)
-
-        flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
-        systemMemberships=self.calc_coarse_flow_memberships(use_flows=None)
-
-        allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["pwscore"].sum()
-        totalFlowMembership=flowMembership["pwscore"].sum()
-        outData = defaultdict(list)
-
-        for pwID in pathways:
-
-            pwName, pwGenes = pathways[pwID]
-            pwGenes = list(pwGenes)
-            inflow_inset = list(flowGenes.intersection(pwGenes))
-
-            pathwayMembership = flowMembership.filter(pl.col(self.symbol_column).is_in(pwGenes))["pwscore"].sum()
-            flowInPathwayScore = systemMemberships.filter(pl.col(self.symbol_column).is_in(pwGenes))["pwscore"].sum()
-            
-            genes_coverage = pathwayMembership / totalFlowMembership if totalFlowMembership > 0 else 0
-            pathway_coverage = pathwayMembership / len(pwGenes) if len(pwGenes) > 0 else 0
-
-
-            outData["pwid"].append(pwID)
-            outData["pwname"].append(pwName)
-            outData["pwFlow"].append(flowInPathwayScore)
-            outData["pwGenes"].append(len(pwGenes))
-            outData["allPwFlow"].append(totalFlowMembership)
-            outData["allPwGenes"].append(allPWGeneMemberships)
-
-            outData["pw_gene_intersection"].append(len(inflow_inset))
-            outData["pw_coverage"].append(pathway_coverage)
-            outData["genes_coverage"].append(genes_coverage)
-
-            outData["mean_coverage"].append(pathway_coverage*genes_coverage)
-
-        outdf = pd.DataFrame.from_dict(outData)       
-        allFGDFs = self._calculate_pvalues(outdf, set_size_threshold=set_size_threshold)
-                
-        return allFGDFs
-
-    def analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
-
-        rp = self.get_pathways(pathways_file)
-        
-        if not additional_pathways is None:
-            for pname, pgenes in additional_pathways:
-                rp[pname] = (pname, pgenes)
-
-
-        flowCols = set()
-        
-        for fgid in use_flows:
-            fc, _ = self._get_flow_columns(fgid)
-            flowCols.update(fc)
-            
-        flowCols=list(flowCols)
-            
-        flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
-    
-        allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=use_flows)
-        
-        allFGDFs = self._calculate_pvalues(allFGDFs, set_size_threshold=set_size_threshold)
-        
-        return allFGDFs
-
-
-    def _calculate_flow_score(self, flowDF, flowID, min_gene_flow=None):
+    def _calculate_flow_score_for_paths(self, flowDF, flowID, min_gene_flow=None):
         
         
         flowCols, flow = self._get_flow_columns(flowID)
@@ -2221,7 +2069,389 @@ class FlowAnalysis:
         
         return flowScore, flow
 
-    def _calculate_pvalues(self, df, set_size_threshold=None):
+
+
+    def _get_flow_columns(self, flowID):
+        
+        flow = self.flowid2flow[flowID]
+        
+        flowCols = ["{}{}{}".format(y, self.sep,x) for x,y in flow]
+        
+        return flowCols, flow
+    
+    
+    def paths2edges(self, paths):
+        """Converts a list of flowIDs or flows into an edgeID list
+
+        Args:
+            paths (list): list of flowIDs or flows
+
+        Returns:
+            list: edgeIDs
+        """
+        
+        paths = list(paths)
+        requiredEdges = set()
+                
+        if type(paths[0]) == int:
+            # integer sequence => flowid2flow
+            
+            for pathid in paths:
+                flow = self.flowid2flow[pathid]
+                for i in range(0, len(self.series2name)-1):
+                    edge = (flow[i], flow[i+1])
+                    requiredEdges.add(edge)
+                    
+        else:
+            
+            for flow in paths:
+                for i in range(0, len(self.series2name)-1):
+                    edge = (flow[i], flow[i+1])
+                    requiredEdges.add(edge)
+                    
+        edgeIDs = set()
+        
+        for edgeID in self.edgeid2flow:
+            if tuple(self.edgeid2flow[edgeID]) in requiredEdges:
+                edgeIDs.add(edgeID)
+                
+        return edgeIDs
+    
+    def edges2paths(self, edgeIDs):
+        """Converts a list of edge IDs into paths
+
+        Args:
+            edgeIDs (list): edge IDs
+
+        Returns:
+            list: paths
+        """
+
+        series2edge = defaultdict(set)
+
+        for edgeID in edgeIDs:
+
+            edge = tuple(self.edgeid2flow[edgeID])
+            src, tgt = edge
+
+            srcSeries, srcLevel = src
+            tgtSeries, tgtLevel = tgt
+
+            series2edge[srcSeries].add(edge)
+
+        currentPaths = series2edge[ self.seriesOrder[0] ]
+        print(currentPaths)
+
+        for series in self.seriesOrder[2:]:
+
+            nextCurrentPaths = []
+            for path in currentPaths:
+
+                lastNode =  tuple(path[-1])
+                
+                for edge in series2edge[lastNode[0]]:
+
+                    if edge[0] == (lastNode[0], lastNode[1]):
+                        newpath = list(path) + [edge[1]]
+                        nextCurrentPaths.append(newpath)
+
+            currentPaths = nextCurrentPaths
+
+        currentPaths = set( [tuple(x) for x in currentPaths] )
+        return currentPaths
+            
+    def addpaths(self, paths):
+        """Adds a list of paths as _flowid2flow (in case calculation of all paths is taking too long)
+
+        Args:
+            paths (list): list of paths
+        """
+        
+        self._flowid2flow = {}
+        for x in paths:
+            self._flowid2flow[len(self._flowid2flow)] = x
+            
+                    
+                        
+
+    #
+    ##
+    ### ORA analysis
+    ##
+    #
+    
+
+
+
+
+    def get_pathways(self, pathways_file:str):
+        """Reads in gmt or gaf file with genesets
+
+        Args:
+            pathways_file (str): path to gmt/gaf-file with genesets
+
+        Raises:
+            ValueError: Invalid file format (if neither gmt nor gaf format)
+
+        Returns:
+            dict: Dictionary with term-id to tuple (term-name, geneset)
+        """
+        
+        print("Loading pathways from", pathways_file)
+        
+        if pathways_file.endswith("gmt"):
+            rp = self._read_gmt_file(pathways_file)
+        elif pathways_file.endswith("gaf"):
+            rp = self._read_gaf_file(pathways_file)
+        else:
+            raise ValueError("Invalid File Format")
+        
+        print("Identified", len(rp), "pathways")
+        
+        return rp
+
+
+
+
+    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
+        """Calculated geneset over-representation results for genesets provided in genesets_file and additional_genesets.
+
+        Args:
+            use_flows (set, optional): Set of edges/flows to consider for analysis (if None, all edges are considered)
+            genesets_file (str, optional): Path to geneset file in gmt-format. Defaults to "ReactomePathways.gmt".
+            additional_genesets (dict, optional): Dictionary (geneset name to geneset) of additional genesets. Defaults to None.
+            set_size_threshold (list, optional): Borders of the bins for calculating p-values from z-scores. Defaults to [ 1,2,3,4, 10, 50, 100].
+
+        Returns:
+            _type_: _description_
+        """
+
+        pathways = self.get_pathways(genesets_file)
+            
+        if not additional_genesets is None:
+            for pname, pgenes in additional_genesets:
+                pathways[pname] = (pname, pgenes)
+
+
+
+        flowMembership=self.calc_coarse_flow_memberships(use_flows=use_edges)
+
+        allPathwayGenes = set()
+        for x in pathways:
+            pwname, pwGenes = pathways[x]
+            for gene in pwGenes:
+                allPathwayGenes.add(gene)
+
+        flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
+        systemMemberships=self.calc_coarse_flow_memberships(use_flows=None)
+
+        allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["membership"].sum()
+        totalFlowMembership=flowMembership["membership"].sum()
+        outData = defaultdict(list)
+
+        for pwID in pathways:
+
+            pwName, pwGenes = pathways[pwID]
+            pwGenes = list(pwGenes)
+            inflow_inset = list(flowGenes.intersection(pwGenes))
+
+            pathwayMembership = flowMembership.filter(pl.col(self.symbol_column).is_in(pwGenes))["membership"].sum()
+            flowInPathwayScore = systemMemberships.filter(pl.col(self.symbol_column).is_in(pwGenes))["membership"].sum()
+            
+            genes_coverage = pathwayMembership / totalFlowMembership if totalFlowMembership > 0 else 0
+            pathway_coverage = pathwayMembership / len(pwGenes) if len(pwGenes) > 0 else 0
+
+            # population: all genes
+            # condition: genes
+            # subset: pathway
+
+            outData["pwid"].append(pwID)
+            outData["pwname"].append(pwName)
+            outData["pwFlow"].append(pathwayMembership)
+            outData["pwGenes"].append(len(pwGenes))
+            outData["allPwFlow"].append(totalFlowMembership)
+            outData["allPwGenes"].append(allPWGeneMemberships)
+
+            outData["pw_gene_intersection"].append(len(inflow_inset))
+            outData["pw_coverage"].append(pathway_coverage)
+            outData["genes_coverage"].append(genes_coverage)
+
+            outData["mean_coverage"].append(pathway_coverage*genes_coverage)
+
+        outdf = pd.DataFrame.from_dict(outData)       
+        allFGDFs = self._calculate_pvalues(outdf, set_size_threshold=set_size_threshold)
+                
+        return allFGDFs
+
+
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})"):
+        """ Plots dot-plot for overrepresentation analysis results
+
+        Args:
+            dfin (pandas.DataFrame): pandas dataframe containing ORA results
+            title (str): title of plot
+            numResults (int, optional): Number of results shown in plot. Defaults to 10.
+            figsize (tuple, optional): Size of the figure. Defaults to (10,10).
+            outfile (str, optional): path to store plot in. Defaults to None.
+            sep (str, optional): separator between term name and term id. Defaults to " ".
+            entryformat (str, optional): Format string for y-axis description of ORA results. Defaults to "{x}{sep}({y}, pw_cov={z:.3f}/{s})".
+        """
+
+        
+        def makeTitle(colDescr, colID, colSize, setSize):
+            out = []
+            for x,y,z, s in zip(colDescr, colID, colSize, setSize):
+                out.append(entryformat.format(x=x, sep=sep, y=y, z=z, s=s))
+
+            return out
+
+
+        df_raw = dfin.copy()
+
+        # Prepare Data
+        #determine plot type
+
+        termIDColumn = "pwid"
+        termNameColumn = "pwname"
+        qvalueColumn = "adj_pval"
+        df = df_raw.copy()
+
+        print(df_raw.columns)
+        print("GeneRatio" in df_raw.columns)
+        print("BgRatio" in df_raw.columns)
+
+        rvb = None
+
+        color1 = "#883656"
+        color2 = "#4d6841"
+        color3 = "#afafaf"
+
+        if "pw_coverage" in df_raw.columns and "genes_coverage" in df_raw.columns:
+            #ORA
+            rvb = self._custom_div_cmap(150, mincol=color2, maxcol=color3, midcol=None)
+            colorValues = [rvb(x/df.pwGenes.max()) for x in df.pwGenes]
+
+        else:
+            raise ValueError()
+
+        df['termtitle'] = makeTitle(df_raw[termNameColumn], df_raw[termIDColumn], df["pwFlow"],df["pwGenes"])
+
+
+        #df.sort_values('adj_pval', inplace=True, ascending=True)
+        df.reset_index()
+        df = df[:numResults]
+        colorValues = colorValues[:numResults]
+        
+        df = df.iloc[::-1]
+        colorValues = colorValues[::-1]
+
+        print(df.shape)
+
+        if df.shape[0] == 0:
+            return
+        
+        maxNLog = max(-np.log(df.adj_pval))
+        maxLine = ((maxNLog// 10)+1)*10       
+        
+        # Draw plot
+        fig, ax = plt.subplots(figsize=figsize, dpi= 80)
+        ax.hlines(y=df.termtitle, xmin=0, xmax=maxLine, color='gray', alpha=0.7, linewidth=1, linestyles='dashdot')
+        ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
+        
+        sizeFactor = 10    
+        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
+
+        handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
+        labels = [x for x in labels]
+
+        # Title, Label, Ticks and Ylim
+        ax.set_title(title, fontdict={'size':12})
+        ax.set_xlabel('Neg. Log. Adj. p-Value', fontdict={'size':12})
+        ax.set_yticks(df.termtitle)
+        ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
+        
+        plt.tick_params(axis='x', which="major", length=7, width=2)
+        plt.tick_params(axis='x', which="minor", length=5, width=2)
+        
+        if (0-np.log10(df["adj_pval"].min())) > 50:
+            ax.set_xscale('log')
+            
+            
+        ax.xaxis.set_major_formatter(ScalarFormatter())
+        
+        plt.grid(b=None)
+        plt.tight_layout()
+        plt.yticks(fontsize=16)
+        plt.xticks(fontsize=8)
+        plt.setp(ax.get_xmajorticklabels(), fontsize=8)
+        plt.setp(ax.get_xminorticklabels(), fontsize=8)
+
+        if not outfile is None:
+            plt.savefig(outfile + ".png", bbox_inches='tight')
+            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+        
+        plt.show()
+
+
+
+
+
+
+
+
+    #
+    ##
+    ### INTERNAL FUNCTIONS
+    ##
+    #
+    
+    def _create_series_color_map(self, seriesColors, mode="scaling"):
+        """Creates a colormap for given colors per entry of seriesColors
+
+        Args:
+            seriesColors (dict): Dictionary with series name to color
+            mode (str, optional): Whether diverging or scaling ( continuous ) colormap should be generated. Defaults to     "scaling".
+
+        Returns:
+            dictionary(colormap): For each given seriesname a colormap is generated
+        """
+        if seriesColors is None:
+            seriesColors = {}
+            for si, x in enumerate(self.series2name):
+                seriesColors[self.series2name[x]] = plt.get_cmap("viridis")(si/len(self.series2name))
+        seriesColorMap = {}
+        for x in seriesColors:
+            scmap = SankeyPlotter.createColorMap(seriesColors[x], mode)
+            seriesColorMap[x] = scmap
+            
+        return seriesColorMap
+    
+    def _custom_div_cmap(self, numcolors=11, name='custom_div_cmap',
+                        mincol='blue', midcol='white', maxcol='red'):
+        """ Create a custom diverging colormap with three colors
+        
+        Default is blue to white to red with 11 colors.  Colors can be specified
+        in any way understandable by matplotlib.colors.ColorConverter.to_rgb()
+        """
+
+        from matplotlib.colors import LinearSegmentedColormap 
+        
+        cmap = LinearSegmentedColormap.from_list(name=name, 
+                                                colors = [x for x in [mincol, midcol, maxcol] if not x is None],
+                                                N=numcolors)
+        return cmap
+    
+    def _calculate_pvalues(self, df:pd.DataFrame, column:str="pw_coverage", set_size_threshold=None):
+        """Adds p-values and adj. p-values to ORA data frame
+
+        Args:
+            df (pd.DataFrame): ORA data frame
+            column (str): column for which to calculate zscores, p-values and adj. p-values
+            set_size_threshold (int, optional): Borders of the bins for calculating p-values from z-scores. Defaults to None.
+
+        Returns:
+            pd.DataFrame: ORA data frame with p-values (columns: "{column}_adj_pval" and "{column}_pval")
+        """
         
         if set_size_threshold is None:
             set_size_threshold = [ 2, 10, 50, 100]
@@ -2242,26 +2472,102 @@ class FlowAnalysis:
             
             curDF = inDF[(inDF.pwGenes > lastThreshold) & (inDF.pwGenes <= t)].copy()
         
-            pwC_mean = curDF[curDF.pw_coverage != 0].pw_coverage.mean()
-            pwC_std = curDF[curDF.pw_coverage != 0].pw_coverage.std(ddof=0)
+            pwC_mean = curDF[curDF[column] != 0][column].mean()
+            pwC_std = curDF[curDF[column] != 0][column].std(ddof=0)
             
-            curDF["pw_coverage_zscore"] = (curDF["pw_coverage"]-pwC_mean)/pwC_std
-            curDF["pval"] = norm.sf(abs(curDF["pw_coverage_zscore"]))
+            curDF["{}_zscore".format(column)] = (curDF[column]-pwC_mean)/pwC_std
+            curDF["{}_pval".format(column)] = norm.sf(abs(curDF["{}_zscore".format(column)]))
 
-            curDF.loc[curDF["pw_coverage_zscore"] < 0, "pval"] = 1.0
+            curDF.loc[curDF[ "{}_zscore".format(column) ] < 0, "{}_pval".format(column)] = 1.0
             lastThreshold = t
             
             resultDFs.append(curDF)
 
         outDF = pd.concat(resultDFs, axis=0)
 
-        _ , elemAdjPvals, _, _ = multipletests(outDF["pval"], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
-        outDF["adj_pval"] = elemAdjPvals
+        _ , elemAdjPvals, _, _ = multipletests(outDF["{}_pval".format(column)], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)
+        outDF["{}_adj_pval".format(column)] = elemAdjPvals
         
         return outDF
+    
+    def _read_gmt_file(self, filepath:str):
+        """Read in gmt geneset file
 
+        Args:
+            filepath (str): file to read in
 
-    def analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, considerFlows=None, populationSize=None):
+        Returns:
+            dict: dictionary geneset id -> (geneset name, genes)
+        """
+
+        geneset2genes = {}
+
+        with open(filepath) as fin:
+
+            for line in fin:
+
+                line = line.strip().split("\t")
+                pwName = line[0]
+                pwID = line[1]
+                pwGenes = line[2:]
+                pwGenes = [x.upper() for x in pwGenes]
+
+                geneset2genes[pwID] = (pwName, pwGenes)
+
+        return geneset2genes
+    
+    def _read_gaf_file(self, filepath:str):
+        """Read in gaf geneset file
+
+        Args:
+            filepath (str): file to read in
+
+        Returns:
+            dict: dictionary geneset id -> (geneset name, genes)
+        """
+        
+        geneset2genes = defaultdict(set)
+        geneset2name = {}
+
+        with open(filepath) as fin:
+
+            for line in fin:
+                
+                if line.startswith("!"):
+                    continue
+
+                line = line.strip().split("\t")
+                pwName = line[4]
+                pwID = line[4]
+                pwGene = line[2].upper()
+                
+                geneset2name[pwID] = pwName
+                geneset2genes[pwID].add(pwGene)
+                
+        output = {}
+        for x in geneset2name:
+            output[x] = (x, geneset2genes[x])
+
+        return output
+    
+    
+
+    
+    
+    
+    
+    
+    
+    
+    #
+    ##
+    ### OLD FUNCTIONS
+    ##
+    #
+    
+    # __deprecated_
+    
+    def __deprecated_analyse_genes_for_genesets(self, pathways, flowDF, bgFlowDF, considerFlows=None, populationSize=None):
         """
         
         pathways: pathway object
@@ -2358,125 +2664,170 @@ class FlowAnalysis:
         return outdf
 
 
+    def __deprecated_analyse_pathways_grouped(self, use_flows, pathways_file="ReactomePathways.gmt", additional_pathways=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
 
-
-
-
-
-
-
-
-
-
-    def custom_div_cmap(self, numcolors=11, name='custom_div_cmap',
-                        mincol='blue', midcol='white', maxcol='red'):
-        """ Create a custom diverging colormap with three colors
+        rp = self.get_pathways(pathways_file)
         
-        Default is blue to white to red with 11 colors.  Colors can be specified
-        in any way understandable by matplotlib.colors.ColorConverter.to_rgb()
-        """
+        if not additional_pathways is None:
+            for pname, pgenes in additional_pathways:
+                rp[pname] = (pname, pgenes)
 
-        from matplotlib.colors import LinearSegmentedColormap 
+
+        flowCols = set()
         
-        cmap = LinearSegmentedColormap.from_list(name=name, 
-                                                colors = [x for x in [mincol, midcol, maxcol] if not x is None],
-                                                N=numcolors)
-        return cmap
-
-    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})"):
-        #https://www.programmersought.com/article/8628812000/
+        for fgid in use_flows:
+            fc, _ = self._get_flow_columns(fgid)
+            flowCols.update(fc)
+            
+        flowCols=list(flowCols)
+            
+        flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
+    
+        allFGDFs = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=use_flows)
         
-        def makeTitle(colDescr, colID, colSize, setSize):
-            out = []
-            for x,y,z, s in zip(colDescr, colID, colSize, setSize):
-                out.append(entryformat.format(x=x, sep=sep, y=y, z=z, s=s))
-
-            return out
+        allFGDFs = self._calculate_pvalues(allFGDFs, set_size_threshold=set_size_threshold)
+        
+        return allFGDFs
 
 
-        df_raw = dfin.copy()
 
-        # Prepare Data
-        #determine plot type
+    
+    def __deprecated_analyse_pathways(self, pathways_file="ReactomePathways.gmt", additional_pathways=None, use_flows=None, parallel=True):
 
-        termIDColumn = "pwid"
-        termNameColumn = "pwname"
-        qvalueColumn = "adj_pval"
-        df = df_raw.copy()
+        rp = self.get_pathways(pathways_file)
+        
+        if not additional_pathways is None:
+            for pname, pgenes in additional_pathways:
+                rp[pname] = (pname, pgenes)
 
-        print(df_raw.columns)
-        print("GeneRatio" in df_raw.columns)
-        print("BgRatio" in df_raw.columns)
+        allDFs = []
 
-        rvb = None
+        bar = makeProgressBar()
 
-        color1 = "#883656"
-        color2 = "#4d6841"
-        color3 = "#afafaf"
+        if use_flows is None:
+            use_flows = [x for x in self.flowid2flow]
 
-        if "pw_coverage" in df_raw.columns and "genes_coverage" in df_raw.columns:
-            #ORA
-            rvb = self.custom_div_cmap(150, mincol=color2, maxcol=color3, midcol=None)
-            colorValues = [rvb(x/df.pwGenes.max()) for x in df.pwGenes]
 
+        if parallel:
+            
+            
+            def prepare_flow_analysis_df(fa, fgid):
+                flowCols, _ = fa._get_flow_columns(fgid)
+                flowDF = fa.flows.select(pl.col(flowCols + [fa.symbol_column]))
+                        
+                df = fa.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=fa.flows, considerFlows=[fgid])
+                df["fgid"] = fgid
+                return df
+            
+            
+            print("Starting Event Loop")
+            from joblib import Parallel, delayed, parallel_backend
+            
+            with parallel_backend('loky', n_jobs=8):
+                results = Parallel()(delayed(prepare_flow_analysis_df)(self, fgid) for fgid in use_flows)
+
+                for idx, res in enumerate(results):
+                    allDFs.append(res)
+            
+            print("Event Loop Completed")
+            
+            
         else:
-            raise ValueError()
 
-        df['termtitle'] = makeTitle(df_raw[termNameColumn], df_raw[termIDColumn], df["pwFlow"],df["pwGenes"])
+            for fgid in bar(use_flows):
+                
+                flowCols, _ = self._get_flow_columns(fgid)
+                flowDF = self.flows.select(pl.col(flowCols + [self.symbol_column]))
+                        
+                df = self.analyse_genes_for_genesets(rp, flowDF, bgFlowDF=self.flows, considerFlows=[fgid])
+                df["fgid"] = fgid
+
+                #print(df[df["pwsize"] > 1].sort_values(["pval"], ascending=True).head(3))
+
+                allDFs.append(df)
 
 
-        #df.sort_values('adj_pval', inplace=True, ascending=True)
-        df.reset_index()
-        df = df[:numResults]
-        colorValues = colorValues[:numResults]
+
+        allFGDFs = pd.concat(allDFs, axis=0)
+        allFGDFs = self._calculate_pvalues(allFGDFs)
+
+        return allFGDFs
+    
+
+    
+
+
+
+
+
+
+
+    def __deprecated_plot_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=0.0001,parallel=True):
+        flowScores_df=self.__deprecated_calc_flow_memberships(use_flows,genes=genes,parallel=parallel)
+        return self.make_plot_flow_memberships(flowScores_df,n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize)
+
+
+    
+    def __deprecated_calc_flow_memberships(self,use_flows,genes=None, n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4,min_gene_flow=None,parallel=True):
+        flowDF=self.flows.clone()
         
-        df = df.iloc[::-1]
-        colorValues = colorValues[::-1]
 
-        print(df.shape)
+        if not genes is None:        
+            flowDF = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
+        
+        flowScores = pl.DataFrame()
 
-        if df.shape[0] == 0:
-            return
         
-        maxNLog = max(-np.log(df.adj_pval))
-        maxLine = ((maxNLog// 10)+1)*10       
-        
-        # Draw plot
-        fig, ax = plt.subplots(figsize=figsize, dpi= 80)
-        ax.hlines(y=df.termtitle, xmin=0, xmax=maxLine, color='gray', alpha=0.7, linewidth=1, linestyles='dashdot')
-        ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
-        
-        sizeFactor = 10    
-        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
+        def prepare_flow_calculation(self, flowDF,fgid):
+            flowCols, flow = self._get_flow_columns(fgid)
 
-        handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
-        labels = [x for x in labels]
+            if not min_gene_flow is None:
+                flowDF=flowDF.filter(pl.all(pl.col(flowCols) > min_gene_flow))
+            flowScore_perGene = flowDF.select([self.symbol_column,
+                            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                        ]       
+                        )
+            flowScore_perGene.columns=[self.symbol_column,str(fgid) ]
 
-        # Title, Label, Ticks and Ylim
-        ax.set_title(title, fontdict={'size':12})
-        ax.set_xlabel('Neg. Log. Adj. p-Value', fontdict={'size':12})
-        ax.set_yticks(df.termtitle)
-        ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
         
-        plt.tick_params(axis='x', which="major", length=7, width=2)
-        plt.tick_params(axis='x', which="minor", length=5, width=2)
+            return(flowScore_perGene)
         
-        if (0-np.log10(df["adj_pval"].min())) > 50:
-            ax.set_xscale('log')
+        bar = makeProgressBar()
+
+        
+        if parallel:
             
+            print("Starting Event Loop")
+            from joblib import Parallel, delayed, parallel_backend
+            with parallel_backend('loky', n_jobs=8):
+                results = Parallel()(delayed(prepare_flow_calculation)(self,flowDF, fgid) for fgid in bar(use_flows))
+            print("Event Loop Completed")
             
-        from matplotlib.ticker import ScalarFormatter
-        ax.xaxis.set_major_formatter(ScalarFormatter())
-        
-        plt.grid(b=None)
-        plt.tight_layout()
-        plt.yticks(fontsize=16)
-        plt.xticks(fontsize=8)
-        plt.setp(ax.get_xmajorticklabels(), fontsize=8)
-        plt.setp(ax.get_xminorticklabels(), fontsize=8)
+        else:
+            results=[]
+            for fgid in bar(use_flows):
+                results.append(prepare_flow_calculation(self,flowDF,fgid))
 
-        if not outfile is None:
-            plt.savefig(outfile + ".png", bbox_inches='tight')
-            plt.savefig(outfile + ".pdf", bbox_inches='tight')
+
+        for idx, res in enumerate(results):
+                    
+            if flowScores.shape == (0,0):
+                flowScores=res
+            else:
+                flowScores=flowScores.join(res,on=self.symbol_column,how="outer")
         
-        plt.show()
+        flowScores=flowScores.fill_null(0)  
+        ## here also coloring bars content from flows would be possible
+        flowScores_df= flowScores.select([self.symbol_column,
+                        pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
+                    ]       
+        )
+
+        return flowScores_df    
+
+
+
+
+
+
+    # __deprecated_
