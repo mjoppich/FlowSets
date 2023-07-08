@@ -23,6 +23,8 @@ import seaborn as sns
 import matplotlib.patches as patches
 import matplotlib.colors as mcolors
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import AutoMinorLocator
+
 
 import colorsys
 
@@ -1101,7 +1103,7 @@ class FlowAnalysis:
     #
 
 
-    def plot_flows(self, use_flows:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None):
+    def plot_flows(self, use_edges:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None):
         """Plots the FlowSets system as sankey plot.
 
         Args:
@@ -1126,12 +1128,12 @@ class FlowAnalysis:
             flowDF=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )
 
         
-        if use_flows is None:
-            use_flows = [x for x in self.edgeid2flow]
+        if use_edges is None:
+            use_edges = [x for x in self.edgeid2flow]
         
             
-        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(use_flows=use_flows, genes=genes,backtracking=True)
-        weightSequence = self._backtrack_coarse_flows(genes=genes, node_memberships=node_memberships, used_flows=used_flows)
+        _, node_memberships, used_edges = self.calc_coarse_flow_memberships(use_edges=use_edges, genes=genes,backtracking=True)
+        weightSequence = self._backtrack_coarse_flows(genes=genes, node_memberships=node_memberships, used_edges=used_edges)
 
             
         if specialColors is None:
@@ -1332,8 +1334,8 @@ class FlowAnalysis:
         bgData = self.flows.filter( ~pl.col(self.symbol_column).is_in(genes) )    
 
         print("Background")       
-        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=bgData, use_flows=None,genes=None,backtracking=True)
-        bgWeightSequence = self._backtrack_coarse_flows(flowDF=bgData, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        _, node_memberships, used_edges = self.calc_coarse_flow_memberships(flowDF=bgData, use_edges=None,genes=None,backtracking=True)
+        bgWeightSequence = self._backtrack_coarse_flows(flowDF=bgData, genes=None, node_memberships=node_memberships, used_edges=used_edges)
         bgWeightSequence = self._filter_weightSequence(bgWeightSequence, min_flow)
 
         survivedFlows = [x[0] for x in bgWeightSequence]
@@ -1341,8 +1343,8 @@ class FlowAnalysis:
         fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
        
         print("Foreground")
-        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=fgData, use_flows=None,genes=None,backtracking=True)
-        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_flows=used_flows, edgeIDMod=lambda x: x*(-1))
+        _, node_memberships, used_edges = self.calc_coarse_flow_memberships(flowDF=fgData, use_edges=None,genes=None,backtracking=True)
+        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_edges=used_edges, edgeIDMod=lambda x: x*(-1))
         fgWeightSequence = self._filter_weightSequence(fgWeightSequence, min_flow)
 
 
@@ -1372,15 +1374,15 @@ class FlowAnalysis:
             
             
         #bgData = self.flows.filter( ~pl.col("gene").is_in(genes) )
-        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=self.flows, use_flows=use_edges,genes=None,backtracking=True)
-        bgWeightSequence = self._backtrack_coarse_flows(flowDF=self.flows, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        _, node_memberships, used_edges = self.calc_coarse_flow_memberships(flowDF=self.flows, use_edges=use_edges,genes=None,backtracking=True)
+        bgWeightSequence = self._backtrack_coarse_flows(flowDF=self.flows, genes=None, node_memberships=node_memberships, used_edges=used_edges)
         bgWeightSequence = self._filter_weightSequence(bgWeightSequence, min_flow)
 
         
         fgData = self.flows.filter( pl.col(self.symbol_column).is_in(genes) )
 
-        _, node_memberships, used_flows = self.calc_coarse_flow_memberships(flowDF=fgData, use_flows=use_edges,genes=None,backtracking=True)
-        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_flows=used_flows)
+        _, node_memberships, used_edges = self.calc_coarse_flow_memberships(flowDF=fgData, use_edges=use_edges,genes=None,backtracking=True)
+        fgWeightSequence = self._backtrack_coarse_flows(flowDF=fgData, genes=None, node_memberships=node_memberships, used_edges=used_edges)
         fgWeightSequence = self._filter_weightSequence(fgWeightSequence, min_flow)
 
         for x in fgWeightSequence:
@@ -1398,9 +1400,10 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title, independentEdges=True)
                        
 
-    def make_plot_flow_memberships(self,flowScores_df,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
+    def make_plot_flow_memberships(self, flowScores_df, n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8):
                
         flowScores_df=flowScores_df.sort(["membership",self.symbol_column],descending=[True, False])
+        
         if plot_histogram:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize, gridspec_kw={'height_ratios': [4, 1]}, sharex=True)
         else:
@@ -1433,9 +1436,8 @@ class FlowAnalysis:
         ax1.invert_yaxis()
 
         # Only show minor gridlines once in between major gridlines.
-        from matplotlib.ticker import AutoMinorLocator
         ax1.xaxis.set_minor_locator(AutoMinorLocator(2))
-        #ax2.yaxis.set_minor_locator(AutoMinorLocator(2))
+
 
         if not ax2 is None:
             flowScores_df_rounded=flowScores_df.with_columns(
@@ -1455,7 +1457,7 @@ class FlowAnalysis:
                     real_height=rect.get_height()
                     ax2.text(rect.get_x() + rect.get_width()/2., (real_height*.01).clip(min=2.5),
                             '%d' % int(real_height),c='navy',
-                            ha='center', va='bottom',rotation=90,fontsize=8,weight='bold')
+                            ha='center', va='bottom',rotation=90,fontsize=countsize,weight='bold')
                 ax2.set_title("Binned membership histogram",fontsize = labelsize)
                 ax2.set_yscale('log')
                 ax2.set_facecolor('white')
@@ -1484,18 +1486,17 @@ class FlowAnalysis:
 
 
 
-    def plot_coarse_flow_memberships(self,use_flows, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4):
-        
-        flowScores_df = self.calc_coarse_flow_memberships(use_flows,genes=genes,backtracking=False)
-        
-        return self.make_plot_flow_memberships(flowScores_df,n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize)
+    def plot_flow_memberships(self,use_edges, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True, violin=False, labelsize=4, countsize=8):
+
+        flowScores_df = self.calc_coarse_flow_memberships(flowDF=None, use_edges=use_edges,genes=genes,backtracking=False) 
+        return self.make_plot_flow_memberships(flowScores_df, n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize, countsize=countsize)
 
 
-    def calc_coarse_flow_memberships(self, flowDF=None, use_flows=None, genes=None, backtracking=False):
+    def calc_coarse_flow_memberships(self, flowDF=None, use_edges=None, genes=None, backtracking=False):
         """Calculates memberships of genes given flows as edgeIDs or genes.
 
         Args:
-            use_flows (set, optional): Set of edgeIDs to consider. If None, all edges are considered. Defaults to None.
+            use_edges (set, optional): Set of edgeIDs to consider. If None, all edges are considered. Defaults to None.
             genes (list, optional): List of genes to consider. If None, all genes are considered. Defaults to None.
             backtracking (bool, optional): If true, all data required for backtrack are returned. Defaults to False.
 
@@ -1548,8 +1549,8 @@ class FlowAnalysis:
                     node_memberships[tgtSeries][l]=pl.Series([0]*flowDF.shape[0])
 
 
-            if not use_flows is None:
-                if not edgeID in use_flows:
+            if not use_edges is None:
+                if not edgeID in use_edges:
                     continue
 
             flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in largeComp ]
@@ -1577,14 +1578,14 @@ class FlowAnalysis:
     
         pattern_membership=sum(end_memberships.values())
         flowScores_df=pl.DataFrame({self.symbol_column:flowDF[self.symbol_column], 'membership':pattern_membership})
-        used_flows=[x[0] for x in weightSequence_before if x[1][2] >0]
+        used_edges=[x[0] for x in weightSequence_before if x[1][2] >0]
 
         if backtracking:
-            return flowScores_df, node_memberships, used_flows
+            return flowScores_df, node_memberships, used_edges
 
         return flowScores_df
                         
-    def _backtrack_coarse_flows(self, node_memberships, used_flows, flowDF=None, genes=None, edgeIDMod=None):
+    def _backtrack_coarse_flows(self, node_memberships, used_edges, flowDF=None, genes=None, edgeIDMod=None):
         
         allSeries = [x for x in self.series2name]
         
@@ -1602,7 +1603,7 @@ class FlowAnalysis:
         backtracking_memberships={}
         weightSequence_after = []
 
-        selected_edges=[self.edgeid2flow[x] for x in used_flows ]
+        selected_edges=[self.edgeid2flow[x] for x in used_edges ]
         start_nodes=[x[0] for x  in selected_edges]
         target_nodes=[x[1] for x  in selected_edges]
         for i in reversed(range(len(allSeries) - 1)):
@@ -1624,7 +1625,7 @@ class FlowAnalysis:
 
             for comb1 in reversed(self.levelOrder[tgtSeries]):
 
-                edgeIDs= [list(used_flows)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
+                edgeIDs= [list(used_edges)[x] for x in range(len(selected_edges))  if (tgtSeries,comb1) == target_nodes[x] ] 
                 edges=[self.edgeid2flow[x] for x in edgeIDs]
                 nodes=[x[0] for x  in edges]
 
@@ -2234,7 +2235,7 @@ class FlowAnalysis:
 
 
 
-        flowMembership=self.calc_coarse_flow_memberships(use_flows=use_edges)
+        flowMembership=self.calc_coarse_flow_memberships(use_edges=use_edges)
 
         allPathwayGenes = set()
         for x in pathways:
@@ -2243,7 +2244,7 @@ class FlowAnalysis:
                 allPathwayGenes.add(gene)
 
         flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
-        systemMemberships=self.calc_coarse_flow_memberships(use_flows=None)
+        systemMemberships=self.calc_coarse_flow_memberships(use_edges=None)
 
         allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["membership"].sum()
         totalFlowMembership=flowMembership["membership"].sum()
@@ -2284,7 +2285,7 @@ class FlowAnalysis:
         return allFGDFs
 
 
-    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})"):
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})", qvalueColumn="pw_coverage_adj_pval"):
         """ Plots dot-plot for overrepresentation analysis results
 
         Args:
@@ -2313,7 +2314,7 @@ class FlowAnalysis:
 
         termIDColumn = "pwid"
         termNameColumn = "pwname"
-        qvalueColumn = "adj_pval"
+        #qvalueColumn = "adj_pval"
         df = df_raw.copy()
 
         print(df_raw.columns)
@@ -2350,7 +2351,7 @@ class FlowAnalysis:
         if df.shape[0] == 0:
             return
         
-        maxNLog = max(-np.log(df.adj_pval))
+        maxNLog = max(-np.log(df[qvalueColumn]))
         maxLine = ((maxNLog// 10)+1)*10       
         
         # Draw plot
@@ -2359,7 +2360,7 @@ class FlowAnalysis:
         ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
         
         sizeFactor = 10    
-        scatter = ax.scatter(y=df.termtitle, x=-np.log(df.adj_pval), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
+        scatter = ax.scatter(y=df.termtitle, x=-np.log(df[qvalueColumn]), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
 
         handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
         labels = [x for x in labels]
@@ -2373,13 +2374,13 @@ class FlowAnalysis:
         plt.tick_params(axis='x', which="major", length=7, width=2)
         plt.tick_params(axis='x', which="minor", length=5, width=2)
         
-        if (0-np.log10(df["adj_pval"].min())) > 50:
+        if (0-np.log10(df[qvalueColumn].min())) > 50:
             ax.set_xscale('log')
             
             
         ax.xaxis.set_major_formatter(ScalarFormatter())
         
-        plt.grid(b=None)
+        plt.grid(visible=False)
         plt.tight_layout()
         plt.yticks(fontsize=16)
         plt.xticks(fontsize=8)
