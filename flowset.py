@@ -122,7 +122,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None, independentEdges=False):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None, independentEdges=False, seriesFontsize=22, classFontsize=22):
 
         
         levelHeight=2
@@ -306,7 +306,7 @@ class SankeyPlotter:
             textColor = cls.get_text_color_based_on_background_color(nodeColor, "#FFFFFF", "#000000")
             
 
-            t = ax.text(nodePosition[0], nodePosition[1], nodeStr, transform=ax.transData, fontsize=14,rotation=90,
+            t = ax.text(nodePosition[0], nodePosition[1], nodeStr, transform=ax.transData, fontsize=classFontsize,rotation=90,
                 verticalalignment='center', ha='center', va='center', bbox=None, color=textColor)
             
 
@@ -326,11 +326,11 @@ class SankeyPlotter:
             faceColorRGB = mcolors.to_rgb(faceColor)
             textColor = cls.get_text_color_based_on_background_color(faceColorRGB, "#FFFFFF", "#000000")
             
-            rect = patches.FancyBboxPatch( (si-0.5*bwidth, -2 - 0.5*bheight), width=bwidth, height=bheight, facecolor=faceColorRGB, linewidth=0)
+            rect = patches.FancyBboxPatch( (si-1.0*bwidth, -2 - 0.5*bheight), width=2*bwidth, height=bheight, facecolor=faceColorRGB, linewidth=0)
             rect.set_boxstyle("round", rounding_size=0.05, pad=0)
             ax.add_patch(rect)
 
-            ax.text(si, -2, series2name[series], transform=ax.transData, fontsize=14,rotation=0,
+            ax.text(si, -2, series2name[series], transform=ax.transData, fontsize=seriesFontsize,rotation=0,
                 verticalalignment='center', ha='center', va='center', bbox=None, color=textColor)
 
 
@@ -373,7 +373,8 @@ class SankeyPlotter:
             adjusted.append(col2)
         L = (0.2126 * adjusted[0] + 0.7152 * adjusted[1] + (0.072 * adjusted[2]))
         
-        return L < 0.179
+        #return L < 0.179
+        return L < 0.3
 
     @classmethod
     def get_text_color_based_on_background_color(cls, bgColor, lightColor, darkColor):
@@ -397,9 +398,7 @@ class SankeyPlotter:
         
         if mode == "scaling":
             
-
-            
-            brightInColor = cls.scale_lightness(inColorRGB, 2)
+            brightInColor = cls.scale_lightness(inColorRGB, 1.5)
             colorList = [brightInColor, inColorRGB]
         
         elif mode == "diverging":
@@ -414,6 +413,10 @@ class SankeyPlotter:
             
             inCColorRGB = get_complementary(tuple([int(x*255) for x in inColorRGB]))
             colorList = [cls.scale_lightness(inCColorRGB, 0.5), inCColorRGB,  cls.scale_lightness(inColorRGB, 1.5), inColorRGB]
+            
+        elif mode == "constant":
+            
+            return lambda x: inColorRGB
             
         cmap = mcolors.LinearSegmentedColormap.from_list("custom", colorList)
         
@@ -1136,26 +1139,24 @@ class FlowAnalysis:
         weightSequence = self._backtrack_coarse_flows(genes=genes, node_memberships=node_memberships, used_edges=used_edges)
 
             
-        if specialColors is None:
-            indices=[w[0] for w in weightSequence ]
-            startingnodes=[w[1][0][1] for w in weightSequence ]
-            #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
-            levelColors=dict.fromkeys(startingnodes)
-            for i,k in enumerate(list(levelColors.keys())):
-                levelColors[k] =i 
-            maxLevels=len(levelColors.keys())
-
-            colours=sns.color_palette(sns_palette,maxLevels)
-
-            c=[colours[levelColors[s]] for s in startingnodes]
-            specialColors=pd.DataFrame({
-                'values':c},
-                index=indices).to_dict()['values']
+        #if specialColors is None:
+        #    indices=[w[0] for w in weightSequence ]
+        #    startingnodes=[w[1][0][1] for w in weightSequence ]
+        #    #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
+        #    levelColors=dict.fromkeys(startingnodes)
+        #    for i,k in enumerate(list(levelColors.keys())):
+        #        levelColors[k] =i 
+        #    maxLevels=len(levelColors.keys())#
+        #    colours=sns.color_palette(sns_palette,maxLevels)
+        #    c=[colours[levelColors[s]] for s in startingnodes]
+        #    specialColors=pd.DataFrame({
+        #        'values':c},
+        #        index=indices).to_dict()['values']
             
         weightSequence = self._filter_weightSequence(weightSequence,cutoff=min_flow)
         
         new_indices=[w[0] for w in weightSequence ]
-        specialColors={k: v for k, v in specialColors.items() if k in new_indices}
+        #specialColors={k: v for k, v in specialColors.items() if k in new_indices}
                 
         if not seriesColors is None:
             seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
@@ -1282,12 +1283,11 @@ class FlowAnalysis:
             
         pd_filtered_flow.index = newIndex
                 
-        plt.figure(figsize=figsize)
         sns.set(font_scale=font_scale)
         
         pd_filtered_flow = pd_filtered_flow.iloc[::-1]
         
-        g=sns.clustermap(pd_filtered_flow, row_cluster=False, col_cluster=cluster_genes, vmin=limits[0], vmax=limits[1], annot=annot, fmt=annot_fmt, cbar_pos=None, dendrogram_ratio=0.1)
+        g=sns.clustermap(pd_filtered_flow, figsize=figsize, row_cluster=False, col_cluster=cluster_genes, vmin=limits[0], vmax=limits[1], annot=annot, fmt=annot_fmt, cbar_pos=None, dendrogram_ratio=0.1, yticklabels=True, xticklabels=True)
         
         g.ax_col_dendrogram.set_visible(False)
         
@@ -1353,7 +1353,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True)
 
 
-    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="cividis"):
         """Plots the flow system and colors edges by the genes' memberships.
 
         Args:
@@ -1393,14 +1393,17 @@ class FlowAnalysis:
         maxFlowValue = max([ x[1][-1] for x in fgWeightSequence])
         #print(maxFlowValue)
 
-        cmap = get_cmap("cividis")
+        cmap = get_cmap(colormap)
         norm = mpl.colors.Normalize(vmin=0, vmax=maxFlowValue)
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
-        SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=lambda x: np.sqrt(x), fsize=figsize, cmap=cmap, norm=norm, outfile=outfile, title=title, independentEdges=True)
+        SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder,
+                                 specialColors=specialColors, transformCounts=lambda x: np.sqrt(x),
+                                 fsize=figsize, cmap=cmap, norm=norm, outfile=outfile,
+                                 title=title, independentEdges=True)
                        
 
-    def make_plot_flow_memberships(self, flowScores_df, n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8):
+    def make_plot_flow_memberships(self, flowScores_df, n_genes=30, color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8):
                
         flowScores_df=flowScores_df.sort(["membership",self.symbol_column],descending=[True, False])
         
@@ -1577,7 +1580,10 @@ class FlowAnalysis:
         end_memberships=node_memberships[allSeries[-1] ]
     
         pattern_membership=sum(end_memberships.values())
-        flowScores_df=pl.DataFrame({self.symbol_column:flowDF[self.symbol_column], 'membership':pattern_membership})
+        flowScores_df=pl.DataFrame({
+            self.symbol_column : flowDF[self.symbol_column],
+            'membership':pattern_membership
+            })
         used_edges=[x[0] for x in weightSequence_before if x[1][2] >0]
 
         if backtracking:
@@ -2214,7 +2220,7 @@ class FlowAnalysis:
 
 
 
-    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100]):
+    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100], minSetSize=1, feature_modificator=None):
         """Calculated geneset over-representation results for genesets provided in genesets_file and additional_genesets.
 
         Args:
@@ -2233,9 +2239,20 @@ class FlowAnalysis:
             for pname, pgenes in additional_genesets:
                 pathways[pname] = (pname, pgenes)
 
+        # filter pathways
+        pathways = {x: pathways[x] for x in pathways if len(pathways[x][1]) >= minSetSize}
+        
+        if len(pathways) == 0:
+            return None
 
 
         flowMembership=self.calc_coarse_flow_memberships(use_edges=use_edges)
+        
+        if not feature_modificator is None:
+            
+            flowMembership=flowMembership.with_columns(pl.Series([feature_modificator(x) for x in flowMembership[self.symbol_column]]).alias(self.symbol_column))
+            print(flowMembership.head())
+            
 
         allPathwayGenes = set()
         for x in pathways:
@@ -2245,6 +2262,10 @@ class FlowAnalysis:
 
         flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
         systemMemberships=self.calc_coarse_flow_memberships(use_edges=None)
+        
+        if not feature_modificator is None:
+            
+            systemMemberships=systemMemberships.with_columns(pl.Series([feature_modificator(x) for x in systemMemberships[self.symbol_column]]).alias(self.symbol_column))
 
         allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["membership"].sum()
         totalFlowMembership=flowMembership["membership"].sum()
@@ -2406,7 +2427,7 @@ class FlowAnalysis:
     ##
     #
     
-    def _create_series_color_map(self, seriesColors, mode="scaling"):
+    def _create_series_color_map(self, seriesColors, mode="scaling", colormap=None):
         """Creates a colormap for given colors per entry of seriesColors
 
         Args:
@@ -2418,8 +2439,12 @@ class FlowAnalysis:
         """
         if seriesColors is None:
             seriesColors = {}
+            
+            if colormap is None:
+                colormap = plt.get_cmap("viridis")
+            
             for si, x in enumerate(self.series2name):
-                seriesColors[self.series2name[x]] = plt.get_cmap("viridis")(si/len(self.series2name))
+                seriesColors[self.series2name[x]] = colormap(si/len(self.series2name))
         seriesColorMap = {}
         for x in seriesColors:
             scmap = SankeyPlotter.createColorMap(seriesColors[x], mode)
