@@ -728,6 +728,85 @@ def confusion_matrix(Trues,Results,All,outfile=None):
     
     return(confusion_matrix)
 
+
+
+import bisect
+
+class Closest:
+
+    """Assumes *no* redundant entries - all inputs must be unique"""
+
+    def __init__(self, numlist=None, firstdistance=0):
+        if numlist is None:
+            numlist=[]
+        self.numindexes = dict((val, n) for n, val in enumerate(numlist))
+            #Only if unsorted
+        self.nums = sorted(self.numindexes)
+        self.firstdistance = firstdistance
+
+    def append(self, num):
+        if num in self.numindexes:
+            raise ValueError("Cannot append '%s' it is already used" % str(num))
+        self.numindexes[num] = len(self.nums)
+        bisect.insort(self.nums, num)
+
+    def rank(self, target):
+        rank = bisect.bisect(self.nums, target)
+        if rank == 0:
+            pass
+        elif len(self.nums) == rank:
+            rank -= 1
+        else:
+            dist1 = target - self.nums[rank - 1]
+            dist2 = self.nums[rank] - target
+            if dist1 < dist2:
+                rank -= 1
+        return rank
+
+    def closest(self, target):
+        try:
+            return self.numindexes[self.nums[self.rank(target)]]
+        except IndexError:
+            return 0
+
+    def distance(self, target):
+        rank = self.rank(target)
+        try:
+            dist = abs(self.nums[rank] - target)
+        except IndexError:
+            dist = self.firstdistance
+        return dist
+
+def to_fuzzy_fast(targets, fzy):
+    a = fzy.universe
+    cl = Closest(a)
+
+
+    #for x in targets:
+    #    print(x)
+    #    print(cl.closest(x))
+
+
+    indices=[cl.closest(x) for x in targets ]
+
+    out=pl.DataFrame()
+    out=out.with_columns(pl.Series(name='universe', values=fzy.universe) )
+    for n,v in fzy.terms.items():
+
+        out=out.with_columns(pl.Series(name=n, values=fzy[n].mf) )
+    out=out.with_column( pl.all().round(3) )
+    out=out.with_row_count()
+    out = out.select(
+        [
+            pl.col("row_nr").cast(pl.Int64),
+            pl.all().exclude("row_nr")
+        ]
+    )
+    out=out.join(pl.DataFrame(indices),left_on='row_nr',right_on='column_0')
+    out=out.drop(['row_nr','universe'])
+    return out
+
+
 class FlowAnalysis:
 
     @classmethod
@@ -912,6 +991,8 @@ class FlowAnalysis:
                             distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
                             ).alias("fuzzy.mfs")
                     )    
+
+
             if combineOverState == True:
                 
                 #Here values are combined for each symbol_col + cluster entry
@@ -973,6 +1054,145 @@ class FlowAnalysis:
         
         return dfWide, exprMFs
 
+
+
+
+    @classmethod
+    def fuzzify_exprvalues_fast(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, **kwargs):
+        import datetime
+
+        a0 = datetime.datetime.now()
+
+        exprData = indf.clone()
+
+        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        meanExprCol = exprData.columns.index(meancolName)
+        clusterCol = exprData.columns.index(clusterColName)
+
+        if not exprcolName is None:
+            exprCountCol = exprData.columns.index(exprcolName)
+        else:
+
+            exprData=exprData.with_columns(pl.lit(1).alias("cell_expr"))
+            exprCountCol = exprData.columns.index("cell_expr")
+            exprcolName ="cell_expr"
+
+    
+        sdExprCol=-1
+        if not sdcolName is None:
+            sdExprCol = exprData.columns.index(sdcolName)
+        else:
+            sdExprCol=None
+
+        print("Mean Expr", meancolName, "col", meanExprCol)
+        print("Expr Count", exprcolName, "col", exprCountCol)
+        print("SD", sdcolName, "col", sdExprCol)
+        print("Cluster", clusterColName, "col", clusterCol)
+        print("Combining over state: " ,combineOverState)
+
+
+        df = exprData.clone()
+                
+        availableClusters =  list(exprData.select(pl.col(clusterColName)).unique().to_series())
+        fuzzyOuts = []
+        a1 = datetime.datetime.now()
+        print("Time for setting up fuzzy concept:"+str(a1-a0))
+
+        for seriesName in availableClusters:
+
+
+            a = datetime.datetime.now()
+            print("Fuzzifing: "+seriesName)
+
+            indf = df.filter(pl.col(clusterColName) == seriesName)
+            signal=list(indf.select(pl.col(meancolName)).to_series())
+            signal=[0 if v is None else v for v in signal]
+
+
+            
+            if shape=="crisp":
+                print("Crisp mode, different assignment")
+      
+                # weighted mean is calculated with all (not only expressed) cells
+                indf = indf.with_columns(
+                    (pl.col(meancolName)*pl.col(exprcolName)).alias(meancolName)
+                )
+                seriesOut=to_fuzzy_fast(signal, exprMFs[seriesName])
+            else:
+                if not sdcolName is None:    
+                # TODO - implement cases with distribution
+      
+                    seriesOut = indf.select(
+                        pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
+                            distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                            ).alias("fuzzy.mfs")
+                    )
+                else:                    
+                    #print(len(exprMFs[seriesName].terms))
+                    # TODO - implement cases with distribution
+
+                    seriesOut=to_fuzzy_fast(signal, exprMFs[seriesName])
+
+            b = datetime.datetime.now()
+            print("Time for fuzzification:"+str(b-a))
+
+            seriesOut=seriesOut.with_columns(pl.all().prefix("FV_"))
+            FV_columns=list(filter(lambda x:'FV_' in x, seriesOut.columns))
+            seriesOut=seriesOut.select(pl.col(FV_columns))
+            new_indf = indf.hstack(seriesOut)
+            if combineOverState == True:
+                
+
+                #print(new_indf)
+         
+
+                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                    pl.col(FV_columns).mean()
+                ])
+
+                
+                c = datetime.datetime.now()
+                print("Time for combining:"+str(c-b))
+
+
+            # Loose here everything besides fuzzy values
+            new_indf=new_indf.select(pl.col([symbol_column,clusterColName]+FV_columns))
+            # Loose here multiple given features
+            new_indf=new_indf.unique(subset=[symbol_column,clusterColName], maintain_order=True)
+            new_indf=(new_indf
+                .melt(
+                    id_vars = [symbol_column,clusterColName], 
+                    variable_name = 'FV',
+                    value_name="fuzzy.mfs"
+                    )
+                )
+
+            new_indf=new_indf.select(pl.col([symbol_column,clusterColName,'fuzzy.mfs'])).groupby([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
+            seriesOut=new_indf.select(pl.col('fuzzy.mfs'))
+
+
+            if sdcolName is None:
+                indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                        pl.col(meancolName),
+                        pl.col(exprcolName)
+                        ])
+            else:
+                indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                        pl.col(meancolName),
+                        pl.col(sdcolName),
+                        pl.col(exprcolName)
+                        ])   
+    
+            fuzzyOuts.append((indf, seriesOut))
+            
+        allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
+        allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
+
+        df = pl.concat([allExpr, allFuzzy], how="horizontal")
+                 
+        dfWide = to_homogeneous(toWideDF(df,symbol_column, cluster_column=clusterColName), exprMFs)
+        
+        return dfWide, exprMFs
 
 
     @classmethod
@@ -1106,7 +1326,7 @@ class FlowAnalysis:
     #
 
 
-    def plot_flows(self, use_edges:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None):
+    def plot_flows(self, use_edges:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None,linewidth=0, seriesFontsize=10, classFontsize=12):
         """Plots the FlowSets system as sankey plot.
 
         Args:
@@ -1139,31 +1359,34 @@ class FlowAnalysis:
         weightSequence = self._backtrack_coarse_flows(genes=genes, node_memberships=node_memberships, used_edges=used_edges)
 
             
-        #if specialColors is None:
-        #    indices=[w[0] for w in weightSequence ]
-        #    startingnodes=[w[1][0][1] for w in weightSequence ]
-        #    #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
-        #    levelColors=dict.fromkeys(startingnodes)
-        #    for i,k in enumerate(list(levelColors.keys())):
-        #        levelColors[k] =i 
-        #    maxLevels=len(levelColors.keys())#
-        #    colours=sns.color_palette(sns_palette,maxLevels)
-        #    c=[colours[levelColors[s]] for s in startingnodes]
-        #    specialColors=pd.DataFrame({
-        #        'values':c},
-        #        index=indices).to_dict()['values']
+        if specialColors is None:
+            indices=[w[0] for w in weightSequence ]
+            startingnodes=[w[1][0][1] for w in weightSequence ]
+            #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
+            levelColors=dict.fromkeys(startingnodes)
+            for i,k in enumerate(list(levelColors.keys())):
+                levelColors[k] =i 
+            maxLevels=len(levelColors.keys())#
+            colours=sns.color_palette(sns_palette,maxLevels)
+            c=[colours[levelColors[s]] for s in startingnodes]
+            specialColors=pd.DataFrame({
+                'values':c},
+                index=indices).to_dict()['values']
             
-        weightSequence = self._filter_weightSequence(weightSequence,cutoff=min_flow)
-        
-        new_indices=[w[0] for w in weightSequence ]
-        #specialColors={k: v for k, v in specialColors.items() if k in new_indices}
+            weightSequence = self._filter_weightSequence(weightSequence,cutoff=min_flow)
+            
+            new_indices=[w[0] for w in weightSequence ]
+            specialColors={k: v for k, v in specialColors.items() if k in new_indices}
+        else:
+            weightSequence = self._filter_weightSequence(weightSequence,cutoff=min_flow)
+
                 
         if not seriesColors is None:
             seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
         else:
             seriesColorMap=None
             
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title,fsize=figsize,linewidth=linewidth, seriesFontsize=seriesFontsize, classFontsize=classFontsize)
 
 
 
@@ -1226,7 +1449,9 @@ class FlowAnalysis:
         
         
         filtered_flow=self.flows.filter(pl.col(self.symbol_column).is_in(genes) )      
-        pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,1:].columns, index=filtered_flow[:,0].to_pandas().tolist())
+        #pd_filtered_flow=pd.DataFrame(filtered_flow[:,1:], columns=filtered_flow[:,1:].columns, index=filtered_flow[:,0].to_pandas().tolist())
+        pd_filtered_flow=filtered_flow.to_pandas().set_index(self.symbol_column)
+
         
         pd_filtered_flow = pd_filtered_flow.transpose()     
         
@@ -1262,15 +1487,16 @@ class FlowAnalysis:
         states = list(pd_filtered_flow["orderState"])
         lastState = states[0]
         curCount = 1
-        for x in states[1:]:
+        for x in states:
             if x == lastState:
                 curCount += 1
             else:
                 stateCounts.append(curCount)
                 lastState = x
                 curCount = 1
-        
-        stateCounts=np.cumsum(stateCounts)
+        stateCounts.append(curCount)
+
+        stateCounts=np.cumsum(stateCounts[::-1])
         pd_filtered_flow = pd_filtered_flow.drop(["orderLevel","orderState"], axis=1)
         
         #for x in pd_filtered_flow.index:
@@ -1403,7 +1629,7 @@ class FlowAnalysis:
                                  title=title, independentEdges=True)
                        
 
-    def make_plot_flow_memberships(self, flowScores_df, n_genes=30, color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8):
+    def make_plot_flow_memberships(self, flowScores_df, n_genes=30, color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8,draw_zscores=True):
                
         flowScores_df=flowScores_df.sort(["membership",self.symbol_column],descending=[True, False])
         
@@ -1441,6 +1667,15 @@ class FlowAnalysis:
         # Only show minor gridlines once in between major gridlines.
         ax1.xaxis.set_minor_locator(AutoMinorLocator(2))
 
+
+        if draw_zscores:
+            mean= flowScores_df.filter(pl.col("membership")!= 0).select(pl.col("membership")).to_series().mean()
+            std= flowScores_df.filter(pl.col("membership")!= 0).select(pl.col("membership")).to_series().std()
+
+            ax1.axvline(x=mean, color='r',linestyle="solid")
+            ax1.axvline(x=mean+std, color='r',linestyle="dashed")
+            ax1.axvline(x=mean+10*std, color='r',linestyle="dashdot")
+            ax1.axvline(x=mean+50*std, color='r',linestyle="dotted")
 
         if not ax2 is None:
             flowScores_df_rounded=flowScores_df.with_columns(
@@ -1691,9 +1926,11 @@ class FlowAnalysis:
 
     # TODO wozu
     def get_confusion_matrix(self,scores_df,Trues,num_true=None,outfile=None):
+        scores_df=scores_df.sort(["membership"],reverse=True)
+
         if not num_true is None:
             scores_df=scores_df[:num_true]
-        scores_df=scores_df.filter(pl.col("pwscore")>0.0)
+        scores_df=scores_df.filter(pl.col("membership")>0.0)
 
         Results=list(scores_df.select(pl.col(self.symbol_column)))[0].to_list()
         All=list(self.flows.select(pl.col(self.symbol_column)))[0].to_list()
@@ -2191,7 +2428,7 @@ class FlowAnalysis:
 
 
 
-    def get_pathways(self, pathways_file:str):
+    def get_pathways(self, pathways_file:str,to_upper=True):
         """Reads in gmt or gaf file with genesets
 
         Args:
@@ -2207,9 +2444,9 @@ class FlowAnalysis:
         print("Loading pathways from", pathways_file)
         
         if pathways_file.endswith("gmt"):
-            rp = self._read_gmt_file(pathways_file)
+            rp = self._read_gmt_file(pathways_file,to_upper=to_upper)
         elif pathways_file.endswith("gaf"):
-            rp = self._read_gaf_file(pathways_file)
+            rp = self._read_gaf_file(pathways_file,to_upper=to_upper)
         else:
             raise ValueError("Invalid File Format")
         
@@ -2220,7 +2457,7 @@ class FlowAnalysis:
 
 
 
-    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100], minSetSize=1, feature_modificator=None):
+    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100], minSetSize=1, feature_modificator=None,to_upper=True):
         """Calculated geneset over-representation results for genesets provided in genesets_file and additional_genesets.
 
         Args:
@@ -2233,7 +2470,7 @@ class FlowAnalysis:
             _type_: _description_
         """
 
-        pathways = self.get_pathways(genesets_file)
+        pathways = self.get_pathways(genesets_file,to_upper=to_upper)
             
         if not additional_genesets is None:
             for pname, pgenes in additional_genesets:
@@ -2372,7 +2609,7 @@ class FlowAnalysis:
         if df.shape[0] == 0:
             return
         
-        maxNLog = max(-np.log(df[qvalueColumn]))
+        maxNLog = max(-np.log10(df[qvalueColumn]))
         maxLine = ((maxNLog// 10)+1)*10       
         
         # Draw plot
@@ -2381,14 +2618,14 @@ class FlowAnalysis:
         ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
         
         sizeFactor = 10    
-        scatter = ax.scatter(y=df.termtitle, x=-np.log(df[qvalueColumn]), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
+        scatter = ax.scatter(y=df.termtitle, x=-np.log10(df[qvalueColumn]), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
 
         handles, labels = scatter.legend_elements(prop="sizes", alpha=0.6, func=lambda x: x/sizeFactor)
         labels = [x for x in labels]
 
         # Title, Label, Ticks and Ylim
         ax.set_title(title, fontdict={'size':12})
-        ax.set_xlabel('Neg. Log. Adj. p-Value', fontdict={'size':12})
+        ax.set_xlabel('Neg. Log10 Adj. p-Value', fontdict={'size':12})
         ax.set_yticks(df.termtitle)
         ax.set_yticklabels(df.termtitle, fontdict={'horizontalalignment': 'right'})
         
@@ -2516,7 +2753,7 @@ class FlowAnalysis:
         
         return outDF
     
-    def _read_gmt_file(self, filepath:str):
+    def _read_gmt_file(self, filepath:str,to_upper=True):
         """Read in gmt geneset file
 
         Args:
@@ -2536,13 +2773,14 @@ class FlowAnalysis:
                 pwName = line[0]
                 pwID = line[1]
                 pwGenes = line[2:]
-                pwGenes = [x.upper() for x in pwGenes]
+                if(to_upper):
+                    pwGenes = [x.upper() for x in pwGenes]
 
                 geneset2genes[pwID] = (pwName, pwGenes)
 
         return geneset2genes
     
-    def _read_gaf_file(self, filepath:str):
+    def _read_gaf_file(self, filepath:str,to_upper=True):
         """Read in gaf geneset file
 
         Args:
@@ -2565,8 +2803,10 @@ class FlowAnalysis:
                 line = line.strip().split("\t")
                 pwName = line[4]
                 pwID = line[4]
-                pwGene = line[2].upper()
-                
+                if(to_upper):
+                    pwGene = line[2].upper()
+                else:
+                    pwGene = line[2]
                 geneset2name[pwID] = pwName
                 geneset2genes[pwID].add(pwGene)
                 
