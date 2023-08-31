@@ -495,6 +495,9 @@ def to_homogeneous(df:pl.DataFrame, exprMFs, is_foldchange=False):
     for col in exprMFs:
         
         print("to_homogeneous:", col)
+        
+        if not col in df.columns:
+            df=df.with_columns( pl.lit(None).alias(col) )
                 
         exprMF = exprMFs[col]
         
@@ -504,7 +507,7 @@ def to_homogeneous(df:pl.DataFrame, exprMFs, is_foldchange=False):
         else:
             #fuzzyBins = [x for x in exprMF.terms]
             fuzzyValues = [float(x) for x in to_fuzzy(0, exprMF)]
-                                
+                 
         df=df.with_columns( 
             pl.when(pl.col(col).is_null())
             .then( fuzzyValues )
@@ -761,12 +764,10 @@ class FlowAnalysis:
             maxValue = np.ceil(exprData.select(pl.col(meancolName)).max()[0])[0][0]
 
 
-        minValue=minValue-1
-        maxValue=maxValue+1
+        #minValue=minValue-1
+        #maxValue=maxValue+1
         if not perSeriesFuzzy:
-            
-            print(kwargs)
-            print(minValue, maxValue)
+                    
             
             if (not "centerMode" in kwargs and centers is None) or kwargs.get("centerMode", None) == "minmax":
 
@@ -846,11 +847,17 @@ class FlowAnalysis:
 
 
     @classmethod
-    def fuzzify_exprvalues(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, **kwargs):
+    def fuzzify_exprvalues(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, fuzzifiers=None, **kwargs):
 
         exprData = indf.clone()
 
-        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        if fuzzifiers is None:
+            exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, 
+                                            series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        else:
+            exprMFs = fuzzifiers
+        
+        
         meanExprCol = exprData.columns.index(meancolName)
         clusterCol = exprData.columns.index(clusterColName)
 
@@ -880,6 +887,8 @@ class FlowAnalysis:
                 
         availableClusters =  set([x for x in exprData.get_column(clusterColName)])
         fuzzyOuts = []
+                  
+        
         for seriesName in availableClusters:
             
             indf = df.filter(pl.col(clusterColName) == seriesName)
@@ -912,6 +921,8 @@ class FlowAnalysis:
                             distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
                             ).alias("fuzzy.mfs")
                     )    
+                    
+                    
             if combineOverState == True:
                 
                 #Here values are combined for each symbol_col + cluster entry
@@ -961,15 +972,21 @@ class FlowAnalysis:
                         pl.col(meancolName),
                         pl.col(sdcolName),
                         pl.col(exprcolName)
-                        ])      
+                        ])     
+                    
+             
             fuzzyOuts.append((indf, seriesOut))
+            
+                        
             
         allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
         allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
         df = pl.concat([allExpr, allFuzzy], how="horizontal")
                  
-        dfWide = to_homogeneous(toWideDF(df,symbol_column, cluster_column=clusterColName), exprMFs)
+        dfWide = to_homogeneous(
+                                    toWideDF(df,symbol_column, cluster_column=clusterColName)
+                                    , exprMFs)
         
         return dfWide, exprMFs
 
@@ -1163,7 +1180,7 @@ class FlowAnalysis:
         else:
             seriesColorMap=None
             
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title, fsize=figsize)
 
 
 
@@ -1353,7 +1370,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True)
 
 
-    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="cividis"):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="cividis", seriesColors=None, colorMode="scaling"):
         """Plots the flow system and colors edges by the genes' memberships.
 
         Args:
@@ -1396,11 +1413,15 @@ class FlowAnalysis:
         cmap = get_cmap(colormap)
         norm = mpl.colors.Normalize(vmin=0, vmax=maxFlowValue)
         
+        seriesColorMap=None
+        if not seriesColors is None:
+            seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
+        
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder,
                                  specialColors=specialColors, transformCounts=lambda x: np.sqrt(x),
                                  fsize=figsize, cmap=cmap, norm=norm, outfile=outfile,
-                                 title=title, independentEdges=True)
+                                 title=title, independentEdges=True, seriesColorMap=seriesColorMap)
                        
 
     def make_plot_flow_memberships(self, flowScores_df, n_genes=30, color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8):
@@ -1489,9 +1510,15 @@ class FlowAnalysis:
 
 
 
-    def plot_flow_memberships(self,use_edges, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True, violin=False, labelsize=4, countsize=8):
+    def plot_flow_memberships(self,use_edges, genes=None,n_genes=30,color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True, violin=False, labelsize=4, countsize=8, gene_exclude_patterns=[]):
 
-        flowScores_df = self.calc_coarse_flow_memberships(flowDF=None, use_edges=use_edges,genes=genes,backtracking=False) 
+        flowDF=self.flows.clone()
+        
+        for gene_exclude_pattern in gene_exclude_patterns:
+            flowDF = flowDF.filter(~pl.col(self.symbol_column).str.starts_with(gene_exclude_pattern))
+
+        flowScores_df = self.calc_coarse_flow_memberships(flowDF=flowDF, use_edges=use_edges,genes=genes,backtracking=False)
+        
         return self.make_plot_flow_memberships(flowScores_df, n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize, countsize=countsize)
 
 
@@ -2318,6 +2345,14 @@ class FlowAnalysis:
             sep (str, optional): separator between term name and term id. Defaults to " ".
             entryformat (str, optional): Format string for y-axis description of ORA results. Defaults to "{x}{sep}({y}, pw_cov={z:.3f}/{s})".
         """
+        
+        df_raw = dfin.copy()
+
+        
+        df_raw = df_raw[~np.isnan(df_raw[qvalueColumn])]
+        
+        if df_raw.shape[0] == 0:
+            print("No input given", file=sys.stderr)
 
         
         def makeTitle(colDescr, colID, colSize, setSize):
@@ -2327,8 +2362,6 @@ class FlowAnalysis:
 
             return out
 
-
-        df_raw = dfin.copy()
 
         # Prepare Data
         #determine plot type
