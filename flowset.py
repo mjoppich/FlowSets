@@ -685,6 +685,7 @@ class CustomFuzzyVar(FuzzyVariable):
 
             unscaledValues += self.terms[name].mf
 
+
         assert(abs(sum(unscaledValues)-len(self.universe)) < 1)
 
 
@@ -701,10 +702,6 @@ def to_arg_max(df, exprMFs):
     dfValue = dfValue.fillna(0)
 
     return dfIdx, dfValue
-
-
-
-
 
 
 def top_weightSequence(weightSequence,top=10):
@@ -810,25 +807,52 @@ def to_fuzzy_fast(targets, fzy):
     return out
 
 
-class FlowAnalysis:
+from abc import ABC, abstractmethod
 
-    @classmethod
-    def _filter_weightSequence(cls, weightSequence,cutoff=None):
-        """Filters weight sequence for sequences with weight > cutoff.
-
-        Args:
-            weightSequence (list): weight sequence
-            cutoff (float, optional): cutoff for filter. Defaults to None.
-
-        Returns:
-            list: filtered weightSequence
-        """
-        if not cutoff is None and cutoff > 0:
-            return [x for x in weightSequence if x[1][-1] > cutoff]
-        else:
-            return weightSequence
+class AbstractFuzzifier(ABC):
     
+    @abstractmethod
+    def fuzzify(Self):
+        pass
+    
+    @classmethod
+    def exprDF2LongDF(cls, indf:pl.DataFrame, seriesOrder = None, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
 
+        return cls.fuzzify_exprvalues(indf, seriesOrder=seriesOrder, mfLevels=mfLevels, mfLevelsMirrored=mfLevelsMirrored, centers=centers, meancolName=meancolName, sdcolName=sdcolName, exprcolName=exprcolName, shape=shape, stepsize=stepsize)
+
+        
+    
+    @classmethod
+    def to_vwide(cls, indf, mfFuzzy, meta_columns=["gene"]):
+        
+        clusterCols = [x for x in indf.columns if not x in meta_columns]
+        
+        for col in clusterCols:
+            if not col in mfFuzzy:
+                print("Expected col", col, "in fuzzy concepts.")
+            assert(col in mfFuzzy)
+        
+        outDF = indf.clone()
+        
+        
+        def listcol_to_cols(x):
+            retDict = OrderedDict(zip( ["{}.{}".format(y, col) for y in mfFuzzy[col].terms] , x[col] ))
+            return retDict
+                                
+        
+        
+        for col in clusterCols:
+            
+            structAlias = "{}.mfs".format(col)
+            
+            outDF = outDF.with_columns(
+                pl.struct([col]).apply(listcol_to_cols).alias(structAlias)
+            ).unnest(structAlias)
+            
+            outDF = outDF.drop(col)
+            
+        return outDF
+    
     @classmethod
     def make_fuzzy_concepts(cls, exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=None, shape="tri", series = None, perSeriesFuzzy=False, **kwargs):
         
@@ -842,9 +866,6 @@ class FlowAnalysis:
             minValue = np.floor(exprData.select(pl.col(meancolName)).min()[0])[0][0]
             maxValue = np.ceil(exprData.select(pl.col(meancolName)).max()[0])[0][0]
 
-
-        #minValue=minValue-1
-        #maxValue=maxValue+1
         if not perSeriesFuzzy:
                     
             
@@ -923,15 +944,115 @@ class FlowAnalysis:
                 plt.close()
 
         return exprMFs
+    
+    
+class BaseFuzzifier(AbstractFuzzifier):
+    
+    def __init__(self) -> None:
+        super().__init__()
+        
+        
+    def fuzzify(self, indf:pl.DataFrame, exprMFs, mean_col, sd_col, expr_col, cluster_col, feature_col, num_features=None, missingLevelDefaults=None, sep="."):
+        
+        #mean_col = "mean.cluster"
+        #sd_col = "sd.cluster"
+        #expr_col = "expr.cluster"
+        #cluster_col = "condition_block"
+        #feature_col = "gene"
+    
+        all_features = set(indf[feature_col])
+    
+        exprdata = defaultdict(lambda: defaultdict(list))
+    
+        for row in indf.iter_rows(named=True):
+    
+            mean_val = row[mean_col]
+            sd_val = row[sd_col]
+            expr_val = row[expr_col]
+    
+            cluster_val = row[cluster_col]
+            feature_val = row[feature_col]
+    
+            exprdata[cluster_val][feature_val].append( (mean_val, sd_val, expr_val) )
 
+        fuzzydata = defaultdict(list)
+        fuzzydfs = []
+    
+        for cluster in exprdata:
+            
+            if (not num_features is None) and (cluster in num_features):
+                numSamples = num_features[cluster]
+            else:
+                #numSamples = len([x for x in exprdata[cluster][feature]])
+                numSamples = 1
+                
+            print("Processing cluster", cluster, "with", numSamples, "samples")
+            
+            
+            levelNames = [x for x in exprMFs[cluster].terms]
+            fuzzyHeader = tuple([feature_col] + ["{}{}{}".format(x, sep, cluster) for x in levelNames])
+            
+            for feature in all_features:
 
+                featureElems = [(0,0,0)]
+    
+                if feature in exprdata[cluster]:
+                    featureElems = [x for x in exprdata[cluster][feature]]
+                    while len(featureElems) < numSamples:
+                        featureElems.append( (0,0,0) )
+            
+                res = None
+
+                for elem in featureElems:
+                
+                    fuzzydat = distribution_to_fuzzy( elem[0], elem[1], elem[2], exprMFs[cluster], threshold=0.0)
+                
+                    if res is None:
+                        res = fuzzydat
+    
+                    else:
+                        res = [x+y for x, y in zip(res, fuzzydat)]
+    
+                usedSamples = len(featureElems)
+                res = [x/usedSamples for x in res]
+    
+                resElem = tuple( [feature] + list(res) )
+                fuzzydata[cluster].append(resElem)
+
+            clusterdf = pd.DataFrame.from_records(fuzzydata[cluster], columns=fuzzyHeader)
+            fuzzydfs.append(clusterdf)
+            
+        from functools import reduce
+        fuzzyDF = reduce(lambda x,y: pd.merge(x, y, on=feature_col), fuzzydfs)
+        fuzzyPlDF = pl.from_pandas(fuzzyDF)
+        
+        all_classes = []
+        for state in exprMFs:
+            for level in exprMFs[state].terms:
+                all_classes.append("{}{}{}".format(level, sep, state))
+                
+        
+        for x in all_classes:
+            if not x in fuzzyPlDF.columns:
+                defaultVal = missingLevelDefaults.get(x, 0.0)
+                print("Need to add", x, "with default", defaultVal)
+                fuzzyPlDF = fuzzyPlDF.with_columns(pl.lit( defaultVal ).alias(x))
+                
+        
+        return fuzzyPlDF
+
+class LegacyFuzzifier(AbstractFuzzifier):
+    
+    def __init__(self) -> None:
+        super().__init__()
+        
     @classmethod
-    def fuzzify_exprvalues(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, fuzzifiers=None, **kwargs):
+    def fuzzify(self, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, fuzzifiers=None, **kwargs):
 
         exprData = indf.clone()
 
         if fuzzifiers is None:
-            exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, 
+            exprMFs = self.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, 
                                             series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
         else:
             exprMFs = fuzzifiers
@@ -1067,20 +1188,34 @@ class FlowAnalysis:
                                     toWideDF(df,symbol_column, cluster_column=clusterColName)
                                     , exprMFs)
         
-        return dfWide, exprMFs
+        
+        explDFWide = self.to_vwide(dfWide, exprMFs, meta_columns=[ symbol_column ])
+
+        return explDFWide, exprMFs
 
 
 
+class FastFuzzifier(AbstractFuzzifier):
+    
+    def __init__(self) -> None:
+        super().__init__()
+        
 
     @classmethod
-    def fuzzify_exprvalues_fast(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, **kwargs):
+    def fuzzify(cls, indf:pl.DataFrame, series = None, perSeriesFuzzy=False, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None,symbol_column="gene", meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", clusterColName="cluster", shape="tri", stepsize=None,combineOverState=False, fuzzifiers=None, **kwargs):
         import datetime
 
         a0 = datetime.datetime.now()
 
         exprData = indf.clone()
 
-        exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        #exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        
+        if fuzzifiers is None:
+            exprMFs = cls.make_fuzzy_concepts(exprData, mfLevels, centers, clusterColName, meancolName, mfLevelsMirrored, stepsize=stepsize, shape=shape, series=series, perSeriesFuzzy=perSeriesFuzzy, **kwargs)
+        else:
+            exprMFs = fuzzifiers
+        
         meanExprCol = exprData.columns.index(meancolName)
         clusterCol = exprData.columns.index(clusterColName)
 
@@ -1210,41 +1345,37 @@ class FlowAnalysis:
         return dfWide, exprMFs
 
 
+
+class FlowAnalysis:
+
     @classmethod
-    def exprDF2LongDF(cls, indf:pl.DataFrame, seriesOrder = None, mfLevels = ["NO", "LOW", "med", "HIGH"], mfLevelsMirrored=False, centers=None, meancolName="mean.cluster", sdcolName="sd.cluster", exprcolName="expr.cluster", shape="tri", stepsize=None):
+    def _filter_weightSequence(cls, weightSequence,cutoff=None):
+        """Filters weight sequence for sequences with weight > cutoff.
 
-        return cls.fuzzify_exprvalues(indf, seriesOrder=seriesOrder, mfLevels=mfLevels, mfLevelsMirrored=mfLevelsMirrored, centers=centers, meancolName=meancolName, sdcolName=sdcolName, exprcolName=exprcolName, shape=shape, stepsize=stepsize)
+        Args:
+            weightSequence (list): weight sequence
+            cutoff (float, optional): cutoff for filter. Defaults to None.
 
-        
+        Returns:
+            list: filtered weightSequence
+        """
+        if not cutoff is None and cutoff > 0:
+            return [x for x in weightSequence if x[1][-1] > cutoff]
+        else:
+            return weightSequence
     
+
     @classmethod
-    def to_vwide(cls, indf, mfFuzzy, meta_columns=["gene"]):
+    def fuzzify_exprvalues(cls, ***args, **kwargs):
+        import sys
         
-        clusterCols = [x for x in indf.columns if not x in meta_columns]
+        raise NotImplementedError("This functionality has been moved into the LegacyFuzzifier. First create a LegacyFuzzifier lfz = LegacyFuzzifier(), then call LegacyFuzzifier.fuzzify(...). This already included the calls to to_homogeneous and toWideDF.") 
         
-        for col in clusterCols:
-            assert(col in mfFuzzy)
-        
-        outDF = indf.clone()
-        
-        
-        def listcol_to_cols(x):
-            retDict = OrderedDict(zip( ["{}.{}".format(y, col) for y in mfFuzzy[col].terms] , x[col] ))
-            return retDict
-                                
-        
-        
-        for col in clusterCols:
-            
-            structAlias = "{}.mfs".format(col)
-            
-            outDF = outDF.with_columns(
-                pl.struct([col]).apply(listcol_to_cols).alias(structAlias)
-            ).unnest(structAlias)
-            
-            outDF = outDF.drop(col)
-            
-        return outDF
+
+
+    """
+
+
 
     @classmethod
     def toFlowsDF(cls, indf):
@@ -1269,6 +1400,8 @@ class FlowAnalysis:
         df=df.with_columns(pl.struct(["group.flow"]).apply( lambda row: allgroups[row["group.flow"]] ).to_series().alias("id.flow"))
 
         return explDF
+    
+    """
 
 
     def __init__(self, flows, symbol_column, series2name, exprMF, sep="."):
@@ -1280,9 +1413,9 @@ class FlowAnalysis:
                 idx = idx.replace("cluster.", "")
             nExprMF[idx] = exprMF[x]
             
-        for x in series2name:
-            for term in nExprMF[x[0]].terms:
-                checkCol = "{}{}{}".format(term, sep, x[0])
+        for state in series2name:
+            for level in nExprMF[state[0]].terms:
+                checkCol = "{}{}{}".format(level, sep, state[0])
                 if not checkCol in flows.columns:
                     print("Missing column", checkCol)
                     raise ValueError("Missing column {}".format(checkCol))
@@ -1310,6 +1443,7 @@ class FlowAnalysis:
         
 
 
+    """
     # TODO - wozu?
     def prepare_flows(self, flowDF=None):
 
@@ -1331,8 +1465,53 @@ class FlowAnalysis:
             flowgroup_genes[fgid].add(fggene)
 
         return flowgroup_flow, flowgroup_route, flowgroup_genes
+    """
+
+    def copy(self):
+        """Creates a copy of the current FlowAnalysis object (deep: flows, shallow: series2name, exprMF)
+
+        Returns:
+            FlowAnalysis: Copy of the current FlowAnalysis object
+        """
+        s2nvec = [(x, self.series2name[x]) for x in self.series2name]
+        fa = FlowAnalysis(flows=self.flows.clone(), symbol_column=self.symbol_column, series2name=s2nvec, exprMF=self.exprMF.copy(), sep=self.sep)
+        
+        return fa        
 
 
+    def subset_states(self, keep_states):
+        """ Subsets flowset object to conly contain state from the keep_states attribute.
+
+        Args:
+            keep_states (list): list of descriptors for states contained in this flowsets object
+
+        Returns:
+            FlowsetAnalysis: object only containing the states given by keep_states
+        """
+        
+        fa = self.copy()
+        fa.series2name = {x: fa.series2name[x] for x in fa.series2name if x in keep_states}
+        fa.seriesOrder = [x for x in fa.series2name]
+        
+        remainingColumns = [fa.symbol_column] + [x for x in fa.flows.columns if x.split(fa.sep)[-1] in keep_states]
+        fa.flows = fa.flows.select (pl.col (remainingColumns))
+    
+        fa._edgeid2flow = None
+        
+        return fa
+
+    def filter_genes(self, symbol_prefixes=["AC0", "AL0", "AP0", "AC1", "AL1", "AP1"]):
+        """Filters out genes starting with the given prefixes
+
+        Args:
+            symbol_prefixes (list, optional): _description_. Defaults to ["AC0", "AL0", "AP0", "AC1", "AL1", "AP1"].
+        """
+        
+        print(self.flows.shape)
+        for gp in symbol_prefixes:
+            self.flows = self.flows.filter( ~pl.col(self.symbol_column).str.starts_with(gp) )
+            
+        print(self.flows.shape)
 
     #
     ##
@@ -1690,11 +1869,12 @@ class FlowAnalysis:
         if draw_zscores:
             mean= flowScores_df.filter(pl.col("membership")!= 0).select(pl.col("membership")).to_series().mean()
             std= flowScores_df.filter(pl.col("membership")!= 0).select(pl.col("membership")).to_series().std()
-
-            ax1.axvline(x=mean, color='r',linestyle="solid")
-            ax1.axvline(x=mean+std, color='r',linestyle="dashed")
-            ax1.axvline(x=mean+10*std, color='r',linestyle="dashdot")
-            ax1.axvline(x=mean+50*std, color='r',linestyle="dotted")
+            
+            if not mean is None:
+                ax1.axvline(x=mean, color='r',linestyle="solid")
+                ax1.axvline(x=mean+std, color='r',linestyle="dashed")
+                ax1.axvline(x=mean+10*std, color='r',linestyle="dashdot")
+                ax1.axvline(x=mean+50*std, color='r',linestyle="dotted")
 
         if not ax2 is None:
             flowScores_df_rounded=flowScores_df.with_columns(
