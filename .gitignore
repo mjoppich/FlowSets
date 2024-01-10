@@ -142,3 +142,12 @@ benchmark_proc/wgcna
 
 *.gmt
 *.gmt.zip
+
+
+endocarditis
+
+examples/*.png
+examples/*.pdf
+
+scanpy_usecase/*.h5ad
+scanpy_usecase/*.tsv

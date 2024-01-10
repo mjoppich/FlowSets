@@ -1366,10 +1366,10 @@ class FlowAnalysis:
     
 
     @classmethod
-    def fuzzify_exprvalues(cls, ***args, **kwargs):
+    def fuzzify_exprvalues(cls, *args, **kwargs):
         import sys
         
-        raise NotImplementedError("This functionality has been moved into the LegacyFuzzifier. First create a LegacyFuzzifier lfz = LegacyFuzzifier(), then call LegacyFuzzifier.fuzzify(...). This already included the calls to to_homogeneous and toWideDF.") 
+        raise NotImplementedError("This functionality has been moved into the LegacyFuzzifier. First create a LegacyFuzzifier lfz = LegacyFuzzifier(), then call lfz.fuzzify(...). This already included the calls to to_homogeneous and toWideDF.") 
         
 
 
