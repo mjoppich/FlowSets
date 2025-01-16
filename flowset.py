@@ -27,7 +27,7 @@ from matplotlib.ticker import AutoMinorLocator
 
 
 import colorsys
-
+import pickle
 import polars as pl
 
 import progressbar
@@ -484,7 +484,7 @@ def toWideDF( df,symbol_column, cluster_column="cluster"):
     #dfWide.reset_index(inplace=True)
     #dfWide.reset_index(drop=True, inplace=True)
     
-    dfPivot = df.pivot(values=["fuzzy.mfs"], index=symbol_column, columns=cluster_column)
+    dfPivot = df.pivot(values=["fuzzy.mfs"], index=symbol_column, on=cluster_column)
     return dfPivot
 
 def to_homogeneous(df:pl.DataFrame, exprMFs, is_foldchange=False):
@@ -846,7 +846,7 @@ class AbstractFuzzifier(ABC):
             structAlias = "{}.mfs".format(col)
             
             outDF = outDF.with_columns(
-                pl.struct([col]).apply(listcol_to_cols).alias(structAlias)
+                pl.struct([col]).map_elements(listcol_to_cols, return_dtype=pl.Struct).alias(structAlias)
             ).unnest(structAlias)
             
             outDF = outDF.drop(col)
@@ -1102,23 +1102,26 @@ class LegacyFuzzifier(AbstractFuzzifier):
                 )
 
                 seriesOut = indf.select(
-                    pl.struct([meancolName]).apply(lambda x:
-                        distribution_to_crisp(x[meancolName], exprMFs[seriesName], threshold=0.0)
+                    pl.struct([meancolName]).map_elements(lambda x:
+                        distribution_to_crisp(x[meancolName], exprMFs[seriesName], threshold=0.0),
+                        return_dtype=pl.List(pl.Float32)
                         ).alias("fuzzy.mfs")
                 )         
             else:
                 if not sdcolName is None:          
                     seriesOut = indf.select(
-                        pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
-                            distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                        pl.struct([meancolName, sdcolName, exprcolName]).map_elements(lambda x:
+                            distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0),
+                            return_dtype=pl.List(pl.Float32)
                             ).alias("fuzzy.mfs")
                     )
                 else:                    
                     #print(len(exprMFs[seriesName].terms))
                     
                     seriesOut = indf.select(
-                        pl.struct([meancolName, exprcolName]).apply(lambda x:
-                            distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                        pl.struct([meancolName, exprcolName]).map_elements(lambda x:
+                            distribution_to_fuzzy(x[meancolName], None, x[exprcolName], exprMFs[seriesName], threshold=0.0),
+                            return_dtype=pl.List(pl.Float32)
                             ).alias("fuzzy.mfs")
                     )    
                     
@@ -1146,7 +1149,7 @@ class LegacyFuzzifier(AbstractFuzzifier):
                                 
 
                 FV_columns=list(filter(lambda x:'FV_' in x, new_indf.columns))
-                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                new_indf=new_indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                     pl.col(FV_columns).mean()
                 ])
 
@@ -1159,16 +1162,16 @@ class LegacyFuzzifier(AbstractFuzzifier):
                     )
                 )
 
-                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
+                new_indf=new_indf.group_by([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
 
                 seriesOut=new_indf.select(pl.col('fuzzy.mfs'))
                 if sdcolName is None:
-                    indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                    indf=indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(exprcolName)
                         ])
                 else:
-                    indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                    indf=indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(sdcolName),
                         pl.col(exprcolName)
@@ -1273,8 +1276,9 @@ class FastFuzzifier(AbstractFuzzifier):
                 # TODO - implement cases with distribution
       
                     seriesOut = indf.select(
-                        pl.struct([meancolName, sdcolName, exprcolName]).apply(lambda x:
-                            distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0)
+                        pl.struct([meancolName, sdcolName, exprcolName]).map_elements(lambda x:
+                            distribution_to_fuzzy(x[meancolName], x[sdcolName], x[exprcolName], exprMFs[seriesName], threshold=0.0),
+                            return_dtype=pl.Float64
                             ).alias("fuzzy.mfs")
                     )
                 else:                    
@@ -1292,11 +1296,8 @@ class FastFuzzifier(AbstractFuzzifier):
             new_indf = indf.hstack(seriesOut)
             if combineOverState == True:
                 
-
                 #print(new_indf)
-         
-
-                new_indf=new_indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                new_indf=new_indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                     pl.col(FV_columns).mean()
                 ])
 
@@ -1317,17 +1318,17 @@ class FastFuzzifier(AbstractFuzzifier):
                     )
                 )
 
-            new_indf=new_indf.select(pl.col([symbol_column,clusterColName,'fuzzy.mfs'])).groupby([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
+            new_indf=new_indf.select(pl.col([symbol_column,clusterColName,'fuzzy.mfs'])).group_by([symbol_column,clusterColName], maintain_order=True).agg(pl.col("fuzzy.mfs"))
             seriesOut=new_indf.select(pl.col('fuzzy.mfs'))
 
 
             if sdcolName is None:
-                indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                indf=indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(exprcolName)
                         ])
             else:
-                indf=indf.groupby([symbol_column,clusterColName], maintain_order=True).agg([
+                indf=indf.group_by([symbol_column,clusterColName], maintain_order=True).agg([
                         pl.col(meancolName),
                         pl.col(sdcolName),
                         pl.col(exprcolName)
@@ -1478,6 +1479,14 @@ class FlowAnalysis:
         
         return fa        
 
+    def to_pickle(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def from_pickle(self, filename):
+        with open(filename, 'rb') as f:
+            return pickle.load(f)
 
     def subset_states(self, keep_states):
         """ Subsets flowset object to conly contain state from the keep_states attribute.
@@ -1489,12 +1498,27 @@ class FlowAnalysis:
             FlowsetAnalysis: object only containing the states given by keep_states
         """
         
+        
+        
         fa = self.copy()
-        fa.series2name = {x: fa.series2name[x] for x in fa.series2name if x in keep_states}
+        
+        #find all states contained in fa
+        relevant_states = [x for x in keep_states if x in fa.series2name]
+        
+        fa.series2name = {x: fa.series2name[x] for x in relevant_states}
         fa.seriesOrder = [x for x in fa.series2name]
         
-        remainingColumns = [fa.symbol_column] + [x for x in fa.flows.columns if x.split(fa.sep)[-1] in keep_states]
-        fa.flows = fa.flows.select (pl.col (remainingColumns))
+        remainingColumns = [x for x in fa.flows.columns if x.split(fa.sep)[-1] in relevant_states]
+        
+        selColumns = []
+        for state in relevant_states:
+            for remainingCol in remainingColumns:
+                if remainingCol.split(fa.sep)[-1] == state:
+                    selColumns.append(remainingCol)
+                    
+        print(selColumns)
+        
+        fa.flows = fa.flows.select (pl.col ([fa.symbol_column] + selColumns))
     
         fa._edgeid2flow = None
         
@@ -1580,7 +1604,7 @@ class FlowAnalysis:
         else:
             seriesColorMap=None
             
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title,fsize=figsize,linewidth=linewidth, seriesFontsize=seriesFontsize, classFontsize=classFontsize)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title,fsize=figsize,linewidth=linewidth, seriesFontsize=seriesFontsize, classFontsize=classFontsize, transformCounts=transformCounts)
 
 
 
@@ -1773,7 +1797,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True)
 
 
-    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="cividis", seriesColors=None, colorMode="scaling"):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="YlOrRd", seriesColors=None, colorMode="scaling"):
         """Plots the flow system and colors edges by the genes' memberships.
 
         Args:
@@ -1821,6 +1845,7 @@ class FlowAnalysis:
             seriesColorMap = self._create_series_color_map(seriesColors, colorMode)
         
         specialColors = {x[0]: cmap(x[1][-1]/maxFlowValue) for x in fgWeightSequence}
+        
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder,
                                  specialColors=specialColors, transformCounts=lambda x: np.sqrt(x),
                                  fsize=figsize, cmap=cmap, norm=norm, outfile=outfile,
@@ -1880,7 +1905,6 @@ class FlowAnalysis:
             flowScores_df_rounded=flowScores_df.with_columns(
                 pl.col("membership").round(1)
             )
-            counted_scores=flowScores_df_rounded.select("membership").to_series().value_counts()
 
             if violin:
                 sns.set_style('whitegrid')
@@ -1889,7 +1913,10 @@ class FlowAnalysis:
                 ax2.set_title("Flow membership distribution")
                 ax2.set_xlim(0,1)
             else:
-                bars=ax2.bar(counted_scores['membership'], counted_scores['counts'], width = 0.1)
+                
+                counted_scores=flowScores_df_rounded.select("membership").to_series().value_counts()
+                
+                bars=ax2.bar(counted_scores['membership'], counted_scores['count'], width = 0.1)
                 for rect in bars:
                     real_height=rect.get_height()
                     ax2.text(rect.get_x() + rect.get_width()/2., (real_height*.01).clip(min=2.5),
@@ -1933,6 +1960,80 @@ class FlowAnalysis:
         flowScores_df = self.calc_coarse_flow_memberships(flowDF=flowDF, use_edges=use_edges,genes=genes,backtracking=False)
         
         return self.make_plot_flow_memberships(flowScores_df, n_genes=n_genes,color_genes=color_genes, figsize=figsize, outfile=outfile, plot_histogram=plot_histogram,violin=violin, labelsize=labelsize, countsize=countsize)
+
+
+    def calc_memberships_explicit(self, flowDF=None, states2levels=None, genes=None):
+        """Calculates memberships of genes given a series of states with corresponding levels to use.
+
+        Args:
+            states2levels (dict[list], optional): Dictionary with an entry per state to consider. For each state a list of considered levels is expected, e.g. {state1: [level1, level2], state2: [level2, level3]}
+            genes (list, optional): List of genes to consider. If None, all genes are considered. Defaults to None.
+
+        Returns:
+            polars.DataFrame: DataFrame which contains for each feature a membership
+        """
+        
+
+        if flowDF is None:
+            flowDF = self.flows
+            
+        if not genes is None:        
+            flowDF = flowDF.filter( pl.col(self.symbol_column).is_in(genes) )
+
+        node_memberships={}
+        
+        allstates = [x for x in states2levels]
+        for i, state in enumerate(allstates[:-1]):
+            
+            srcSeries = allstates[i]
+            tgtSeries = allstates[i+1]
+            
+            for srcLevel in states2levels[srcSeries]:
+                for tgtLevel in states2levels[tgtSeries]:
+                    
+                    # TODO this could be done too often
+                    if not srcSeries in node_memberships:
+                        node_memberships[srcSeries]={}
+                        for l in self.levelOrder[srcSeries]:
+                            colname = "{}{}{}".format(l, self.sep, srcSeries)
+                            node_memberships[srcSeries][l]=flowDF.select(pl.col(colname)).to_series()
+
+
+                    # TODO this could be done too often
+                    if not tgtSeries in node_memberships: 
+                        node_memberships[tgtSeries]={}
+                        for l in self.levelOrder[tgtSeries]:
+                            node_memberships[tgtSeries][l]=pl.Series([0]*flowDF.shape[0])
+
+
+                    largeComp = [(srcSeries, srcLevel), (tgtSeries, tgtLevel)]
+                    flowCols=["{}{}{}".format(fclass, self.sep, state) for state, fclass  in largeComp ]              
+                    
+                    temp_df=pl.DataFrame({
+                                            "start":node_memberships[srcSeries][ srcLevel ],
+                                            "target":node_memberships[tgtSeries][ tgtLevel ],
+                                            "factor":flowDF.select(pl.col(flowCols[1])).to_series()
+                                        })
+
+                    temp_df=temp_df.with_columns([
+                        (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("start") * s.struct.field("factor") )).alias("flow"),
+                        (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("target") + (s.struct.field("start") * s.struct.field("factor")) )).alias("pwscore")
+                    ])
+                    #print(temp_df)
+                    
+                    node_memberships[tgtSeries][ tgtLevel ]=temp_df['pwscore']
+
+                        
+
+        end_memberships=node_memberships[allstates[-1] ]
+
+        pattern_membership=sum(end_memberships.values())
+        flowScores_df=pl.DataFrame({
+            self.symbol_column : flowDF[self.symbol_column],
+            'membership':pattern_membership
+            })
+
+        return flowScores_df
 
 
     def calc_coarse_flow_memberships(self, flowDF=None, use_edges=None, genes=None, backtracking=False):
@@ -2006,10 +2107,11 @@ class FlowAnalysis:
                                 })
 
             temp_df=temp_df.with_columns([
-                pl.map(["start", "target", "factor"], lambda s: s[0] * s[2] ).alias("flow"),
-                pl.map(["start", "target", "factor"], lambda s: s[1] + s[0] * s[2] ).alias("pwscore")
-            ])         
-                          
+                (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("start") * s.struct.field("factor") )).alias("flow"),
+                (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("target") + (s.struct.field("start") * s.struct.field("factor")) )).alias("pwscore")
+            ])
+            #print(temp_df)
+             
             node_memberships[tgtSeries][ tgtLevel ]=temp_df['pwscore']
 
 
@@ -2103,11 +2205,15 @@ class FlowAnalysis:
                                               "factor":relative_flow.select(pl.col(flowCol)).to_series()
                                               })
 
-                        #print(temp_df)
+                        #temp_df=temp_df.with_columns(
+                        #    pl.struct(["start", "target", "factor"]).map_elements( lambda s: s[1] * s[2] ).alias("flow"),
+                        #    pl.struct(["start", "target", "factor"]).map_elements( lambda s:s[0] + s[1] * s[2] ).alias("membership")
+                        #    )           
                         temp_df=temp_df.with_columns([
-                            pl.map(["start", "target", "factor"], lambda s: s[1] * s[2] ).alias("flow"),
-                            pl.map(["start", "target", "factor"], lambda s:s[0] + s[1] * s[2] ).alias("membership")
-                        ])           
+                            (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("target") * s.struct.field("factor") )).alias("flow"),
+                            (pl.struct(["start", "target", "factor"]).map_batches( lambda s: s.struct.field("start") + (s.struct.field("target") * s.struct.field("factor")) )).alias("membership")
+                        ])
+                        
                         backtracking_memberships[srcSeries][node[1]]=temp_df['membership']
 
                         outlist = list(self.edgeid2flow[edgeID])
@@ -2459,7 +2565,7 @@ class FlowAnalysis:
         if plot_hist:
             counted_scores=flowScores_df.select("membership").to_series().value_counts()
             #print(counted_scores)
-            ax1.bar(counted_scores['membership'], counted_scores['counts'], width = 10)
+            ax1.bar(counted_scores['membership'], counted_scores['count'], width = 10)
             ax1.set_title("Binned membership histogram")
         else:
             ax1.axis('off')
@@ -2504,7 +2610,7 @@ class FlowAnalysis:
                 return 0.0, flow
         
         flowScoreDF = flowDF.select(
-            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+            pl.struct(flowCols).map_elements(lambda x: np.prod(list(x.values())), return_dtype=pl.Float64).alias("pwscore")
         )
         
         if not min_gene_flow is None and min_gene_flow > 0.0:
@@ -2521,10 +2627,18 @@ class FlowAnalysis:
 
 
     def _get_flow_columns(self, flowID):
+        """Returns the required columns in the flow df for a specific flow/path
+
+        Args:
+            flowID (int): integer id of the path
+
+        Returns:
+            list,list: list of column names, list of node ids
+        """
         
         flow = self.flowid2flow[flowID]
         
-        flowCols = ["{}{}{}".format(y, self.sep,x) for x,y in flow]
+        flowCols = ["{}{}{}".format(y, self.sep, x) for x,y in flow]
         
         return flowCols, flow
     
@@ -2660,9 +2774,8 @@ class FlowAnalysis:
         return rp
 
 
-
-
-    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100], minSetSize=1, feature_modificator=None,to_upper=True):
+    def analyse_pathways_from_memberships(self, flowMembership, genesets_file="ReactomePathways.gmt", additional_genesets=None, set_size_threshold=[ 1,2,3,4, 10, 50, 100],
+                                          minSetSize=1, maxSetSize=None, feature_modificator=None,to_upper=True):
         """Calculated geneset over-representation results for genesets provided in genesets_file and additional_genesets.
 
         Args:
@@ -2684,6 +2797,96 @@ class FlowAnalysis:
         # filter pathways
         pathways = {x: pathways[x] for x in pathways if len(pathways[x][1]) >= minSetSize}
         
+        if not maxSetSize is None:
+            pathways = {x: pathways[x] for x in pathways if len(pathways[x][1]) <= maxSetSize}
+        
+        if len(pathways) == 0:
+            return None
+
+       
+        if not feature_modificator is None:
+            
+            flowMembership=flowMembership.with_columns(pl.Series([feature_modificator(x) for x in flowMembership[self.symbol_column]]).alias(self.symbol_column))
+            print(flowMembership.head())
+            
+
+        allPathwayGenes = set()
+        for x in pathways:
+            pwname, pwGenes = pathways[x]
+            for gene in pwGenes:
+                allPathwayGenes.add(gene)
+
+        flowGenes = set(flowMembership.select(self.symbol_column).to_series())       
+        systemMemberships=self.calc_coarse_flow_memberships(use_edges=None)
+        
+        if not feature_modificator is None:
+            
+            systemMemberships=systemMemberships.with_columns(pl.Series([feature_modificator(x) for x in systemMemberships[self.symbol_column]]).alias(self.symbol_column))
+
+        allPWGeneMemberships = systemMemberships.filter(pl.col(self.symbol_column).is_in(list(allPathwayGenes)))["membership"].sum()
+        totalFlowMembership=flowMembership["membership"].sum()
+        outData = defaultdict(list)
+
+        for pwID in pathways:
+
+            pwName, pwGenes = pathways[pwID]
+            pwGenes = list(pwGenes)
+            inflow_inset = list(flowGenes.intersection(pwGenes))
+
+            pathwayMembership = flowMembership.filter(pl.col(self.symbol_column).is_in(pwGenes))["membership"].sum()
+            
+            genes_coverage = pathwayMembership / totalFlowMembership if totalFlowMembership > 0 else 0
+            pathway_coverage = pathwayMembership / len(pwGenes) if len(pwGenes) > 0 else 0
+
+            # population: all genes
+            # condition: genes
+            # subset: pathway
+
+            outData["pwid"].append(pwID)
+            outData["pwname"].append(pwName)
+            outData["pwFlow"].append(pathwayMembership)
+            outData["pwGenes"].append(len(pwGenes))
+            outData["allPwFlow"].append(totalFlowMembership)
+            outData["allPwGenes"].append(allPWGeneMemberships)
+
+            outData["pw_gene_intersection"].append(len(inflow_inset))
+            outData["pw_coverage"].append(pathway_coverage)
+            outData["genes_coverage"].append(genes_coverage)
+
+            outData["mean_coverage"].append(pathway_coverage*genes_coverage)
+
+        outdf = pd.DataFrame.from_dict(outData)       
+        allFGDFs = self._calculate_pvalues(outdf, set_size_threshold=set_size_threshold)
+                
+        return allFGDFs
+
+
+    def analyse_pathways(self, use_edges:None, genesets_file="ReactomePathways.gmt", additional_genesets=None,
+                         set_size_threshold=[ 1,2,3,4, 10, 50, 100], minSetSize=1, maxSetSize=None, feature_modificator=None,to_upper=True):
+        """Calculated geneset over-representation results for genesets provided in genesets_file and additional_genesets.
+
+        Args:
+            use_flows (set, optional): Set of edges/flows to consider for analysis (if None, all edges are considered)
+            genesets_file (str, optional): Path to geneset file in gmt-format. Defaults to "ReactomePathways.gmt".
+            additional_genesets (dict, optional): Dictionary (geneset name to geneset) of additional genesets. Defaults to None.
+            set_size_threshold (list, optional): Borders of the bins for calculating p-values from z-scores. Defaults to [ 1,2,3,4, 10, 50, 100].
+
+        Returns:
+            _type_: _description_
+        """
+
+        pathways = self.get_pathways(genesets_file,to_upper=to_upper)
+            
+        if not additional_genesets is None:
+            for pname, pgenes in additional_genesets:
+                pathways[pname] = (pname, pgenes)
+
+        # filter pathways
+        pathways = {x: pathways[x] for x in pathways if len(pathways[x][1]) >= minSetSize}
+
+        if not maxSetSize is None:
+            pathways = {x: pathways[x] for x in pathways if len(pathways[x][1]) <= maxSetSize}
+        
         if len(pathways) == 0:
             return None
 
@@ -2693,7 +2896,7 @@ class FlowAnalysis:
         if not feature_modificator is None:
             
             flowMembership=flowMembership.with_columns(pl.Series([feature_modificator(x) for x in flowMembership[self.symbol_column]]).alias(self.symbol_column))
-            print(flowMembership.head())
+
             
 
         allPathwayGenes = set()
@@ -3261,7 +3464,7 @@ class FlowAnalysis:
             if not min_gene_flow is None:
                 flowDF=flowDF.filter(pl.all(pl.col(flowCols) > min_gene_flow))
             flowScore_perGene = flowDF.select([self.symbol_column,
-                            pl.struct(flowCols).apply(lambda x: np.prod(list(x.values()))).alias("pwscore")
+                            pl.struct(flowCols).map_elements(lambda x: np.prod(list(x.values())), return_dtype=pl.Float64).alias("pwscore")
                         ]       
                         )
             flowScore_perGene.columns=[self.symbol_column,str(fgid) ]
@@ -3296,7 +3499,7 @@ class FlowAnalysis:
         flowScores=flowScores.fill_null(0)  
         ## here also coloring bars content from flows would be possible
         flowScores_df= flowScores.select([self.symbol_column,
-                        pl.struct(flowScores[:,1:].columns).apply(lambda x: np.sum(list(x.values()))).alias("pwscore")
+                        pl.struct(flowScores[:,1:].columns).map_elements(lambda x: np.sum(list(x.values())), return_dtype=pl.Float64).alias("pwscore")
                     ]       
         )
 
