@@ -136,15 +136,21 @@ dmypy.json
 .DS_Store
 **/.DS_Stores
 
-
+.quota*
+*.pickle
 benchmark_proc/wgcna
 
 
 *.gmt
 *.gmt.zip
 
-
+#projects
 endocarditis
+atlas_macrophages
+granulopoiesis
+circadian_clock
+
+flowsetold.py
 
 examples/*.png
 examples/*.pdf

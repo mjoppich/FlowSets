@@ -122,7 +122,7 @@ class SankeyPlotter:
                     plt.fill_between(x=xs, y1=ys1, y2=ys2, alpha=link_alpha, color=c, axes=ax)
 
     @classmethod
-    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None, independentEdges=False, seriesFontsize=22, classFontsize=22):
+    def _make_plot( cls, nodeWeigthSequence, series2name, levelOrder, seriesOrder, specialColors=None, nodeColors=None, fsize=None, transformCounts = lambda x: x, cmap=None, norm=None, outfile=None, title=None, verbose=False, linewidth=0.01, seriesColorMap=None, independentEdges=False, seriesFontsize=22, classFontsize=22,maxFlowInAllNodes=None):
 
         
         levelHeight=2
@@ -176,7 +176,9 @@ class SankeyPlotter:
         if independentEdges: 
             numNodes=(numNodes*2)-2
 
-        maxFlowInAllNodes = sum([x for x in maxFlowPerNode.values()])/numNodes
+        if(maxFlowInAllNodes is None):
+            maxFlowInAllNodes = sum([x for x in maxFlowPerNode.values()])/numNodes
+
         if verbose:
             print("Max Flow Per Node")
             print( sum([x for x in maxFlowPerNode.values()]))
@@ -1088,9 +1090,8 @@ class LegacyFuzzifier(AbstractFuzzifier):
         availableClusters =  set([x for x in exprData.get_column(clusterColName)])
         fuzzyOuts = []
                   
-        
+
         for seriesName in availableClusters:
-            
             indf = df.filter(pl.col(clusterColName) == seriesName)
 
             if shape=="crisp":
@@ -1125,7 +1126,7 @@ class LegacyFuzzifier(AbstractFuzzifier):
                             ).alias("fuzzy.mfs")
                     )    
                     
-                    
+          
             if combineOverState == True:
                 
                 #Here values are combined for each symbol_col + cluster entry
@@ -1181,7 +1182,7 @@ class LegacyFuzzifier(AbstractFuzzifier):
             fuzzyOuts.append((indf, seriesOut))
             
                         
-            
+ 
         allExpr = pl.concat([x[0] for x in fuzzyOuts], how="vertical")
         allFuzzy = pl.concat([x[1] for x in fuzzyOuts], how="vertical")
 
@@ -1544,7 +1545,7 @@ class FlowAnalysis:
     #
 
 
-    def plot_flows(self, use_edges:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None,linewidth=0, seriesFontsize=10, classFontsize=12):
+    def plot_flows(self, use_edges:set = None, genes:list=None,figsize:tuple=None, outfile:str=None, min_flow:float=None,  transformCounts = lambda x: x, verbose=False,specialColors=None,sns_palette="icefire", seriesColors=None, colorMode="scaling",title:str=None,linewidth=0, seriesFontsize=10, classFontsize=12,maxFlowInAllNodes=None):
         """Plots the FlowSets system as sankey plot.
 
         Args:
@@ -1580,8 +1581,10 @@ class FlowAnalysis:
         if specialColors is None:
             indices=[w[0] for w in weightSequence ]
             startingnodes=[w[1][0][1] for w in weightSequence ]
+            #can also be color by other features e.g.: endingnodes=[w[1][1][1] for w in weightSequence ]
+
             #maxLevels = max([len(self.levelOrder[x]) for x in self.levelOrder])
-            levelColors=dict.fromkeys(startingnodes)
+            levelColors=dict.fromkeys(list(dict.fromkeys(x for v in self.levelOrder.values() for x in v)))
             for i,k in enumerate(list(levelColors.keys())):
                 levelColors[k] =i 
             maxLevels=len(levelColors.keys())#
@@ -1604,7 +1607,7 @@ class FlowAnalysis:
         else:
             seriesColorMap=None
             
-        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title,fsize=figsize,linewidth=linewidth, seriesFontsize=seriesFontsize, classFontsize=classFontsize, transformCounts=transformCounts)
+        SankeyPlotter._make_plot(weightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, seriesColorMap=seriesColorMap, independentEdges=True,outfile=outfile,title=title,fsize=figsize,linewidth=linewidth, seriesFontsize=seriesFontsize, classFontsize=classFontsize, transformCounts=transformCounts,maxFlowInAllNodes=maxFlowInAllNodes)
 
 
 
@@ -1758,7 +1761,7 @@ class FlowAnalysis:
 
 
 
-    def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts=lambda x: np.sqrt(x)):
+    def highlight_genes(self, genes, figsize=None, outfile=None, min_flow=None, min_gene_flow=None, transformCounts=lambda x: np.sqrt(x),maxFlowInAllNodes=None):
         """Visualizes the selected genes in a different color within the system.
 
         Args:
@@ -1794,10 +1797,10 @@ class FlowAnalysis:
 
         specialColors = {x[0]: "red" for x in fgWeightSequence}
         
-        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True)
+        SankeyPlotter._make_plot(bgWeightSequence+fgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder, specialColors=specialColors, transformCounts=transformCounts, fsize=figsize, outfile=outfile, independentEdges=True,maxFlowInAllNodes=maxFlowInAllNodes)
 
 
-    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="YlOrRd", seriesColors=None, colorMode="scaling"):
+    def visualize_genes(self, genes, figsize=None, min_flow=None, use_edges=None, title=None, outfile=None, score_modifier=lambda x: x, colormap="YlOrRd", seriesColors=None, colorMode="scaling",maxFlowInAllNodes=None):
         """Plots the flow system and colors edges by the genes' memberships.
 
         Args:
@@ -1849,7 +1852,7 @@ class FlowAnalysis:
         SankeyPlotter._make_plot(bgWeightSequence, self.series2name, self.levelOrder, self.seriesOrder,
                                  specialColors=specialColors, transformCounts=lambda x: np.sqrt(x),
                                  fsize=figsize, cmap=cmap, norm=norm, outfile=outfile,
-                                 title=title, independentEdges=True, seriesColorMap=seriesColorMap)
+                                 title=title, independentEdges=True, seriesColorMap=seriesColorMap,maxFlowInAllNodes=maxFlowInAllNodes)
                        
 
     def make_plot_flow_memberships(self, flowScores_df, n_genes=30, color_genes=None, figsize=(2,5), outfile=None, plot_histogram=True,violin=False, labelsize=4, countsize=8,draw_zscores=True):
@@ -1868,10 +1871,12 @@ class FlowAnalysis:
         colormap=['blue']*n_genes
 
          
+
         if color_genes:
-            not_in_genes=flowScores_df_top.select(~pl.col(self.symbol_column).is_in(list(color_genes)))
-            print("Found "+str(n_genes-sum(not_in_genes.to_series()))+" in "+str(n_genes))
-            colormap=np.where(not_in_genes == True, 'red', colormap)[0]
+            is_in_genes=flowScores_df_top.select(pl.col(self.symbol_column).is_in(list(color_genes)))
+            print("Found "+str(sum(is_in_genes.to_series()))+" of "+str(len(color_genes))+" (query) in "+str(n_genes)+ " (top) genes.")
+            is_in_genes = np.array(is_in_genes.to_series())
+            colormap = np.where(is_in_genes, 'red', colormap)
             
         ax1.set_facecolor('#FFFFFF')
 
@@ -2062,14 +2067,12 @@ class FlowAnalysis:
         weightSequence_before = []
         
         for edgeID in self.edgeid2flow:
-            
             largeComp = self.edgeid2flow[edgeID]
             
             src, tgt = largeComp
             
             srcSeries = src[0]
             tgtSeries = tgt[0]
-            
             srcLevel = src[1]
             tgtLevel = tgt[1]
             
@@ -2118,7 +2121,6 @@ class FlowAnalysis:
             outlist = list(largeComp)
             outlist.append(temp_df["flow"].sum() )
             weightSequence_before.append( (edgeID, outlist) )
-
         end_memberships=node_memberships[allSeries[-1] ]
     
         pattern_membership=sum(end_memberships.values())
@@ -2951,7 +2953,7 @@ class FlowAnalysis:
         return allFGDFs
 
 
-    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({y}, pw_cov={z:.3f}/{s})", qvalueColumn="pw_coverage_adj_pval"):
+    def plotORAresult( self, dfin, title, numResults=10, figsize=(10,10), outfile=None, sep=" ", entryformat="{x}{sep}({z:.2f}{sep}/{sep}{s})", qvalueColumn="pw_coverage_adj_pval"):
         """ Plots dot-plot for overrepresentation analysis results
 
         Args:
@@ -3029,7 +3031,7 @@ class FlowAnalysis:
         # Draw plot
         fig, ax = plt.subplots(figsize=figsize, dpi= 80)
         ax.hlines(y=df.termtitle, xmin=0, xmax=maxLine, color='gray', alpha=0.7, linewidth=1, linestyles='dashdot')
-        ax.vlines(x=-np.log(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
+        ax.vlines(x=-np.log10(0.05), ymin=0, ymax=numResults, color='red', alpha=0.7, linewidth=1, linestyles='dashdot')
         
         sizeFactor = 10    
         scatter = ax.scatter(y=df.termtitle, x=-np.log10(df[qvalueColumn]), s=df.pwGenes*sizeFactor, c=colorValues, alpha=0.7, )
