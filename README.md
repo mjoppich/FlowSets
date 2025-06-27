@@ -57,7 +57,7 @@ explDFWide, mfFuzzy = LegacyFuzzifier.fuzzify(
 )
 ```
 
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/complete_flow.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/fuzzy_concept.png" width="500px" />
 
 ```python
 # Create a FlowAnalysis (FlowSets) object for the fuzzified data
@@ -118,7 +118,7 @@ fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfil
 
 ```
 
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_memberships.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_memberships.png" width="250px" />
 <img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/goslim_pathway_analysis.png" width="500px" />
 
 ---
