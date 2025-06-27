@@ -129,9 +129,9 @@ fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfil
 - [Figure 3: Double-Differential Analysis](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
 
 ## other Examples
-- [Basic functionalities](https://github.com/mjoppich/FlowSets/blob/main/Flowsets_example.ipynb)
-- [Downstream analyses](https://github.com/mjoppich/FlowSets/blob/main/small_examples/Flowsets_ORA.ipynb)
-- [Custom import](https://github.com/mjoppich/FlowSets/blob/main/small_examples/Flowsets_different_inputs.ipynb)
+- [Basic functionalities](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_example.ipynb)
+- [Downstream analyses](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_ORA.ipynb)
+- [Custom import](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_different_inputs.ipynb)
 
 ---
 
