@@ -22,10 +22,18 @@
 
 ---
 
+## Install
+
+You can install **FlowSets** using pip:
+
+```bash
+pip install flowsets
+```
+
 ## Quick Start Example
 
 ```python
-from flowset import *
+from flowsets import *
 
 # Read in data as polars dataframe
 data = pl.read_csv(

@@ -826,7 +826,6 @@ class AbstractFuzzifier(ABC):
     
     @classmethod
     def to_vwide(cls, indf, mfFuzzy, meta_columns=["gene"]):
-        
         clusterCols = [x for x in indf.columns if not x in meta_columns]
         
         for col in clusterCols:
@@ -844,9 +843,8 @@ class AbstractFuzzifier(ABC):
         
         
         for col in clusterCols:
-            
             structAlias = "{}.mfs".format(col)
-            
+
             outDF = outDF.with_columns(
                 pl.struct([col]).map_elements(listcol_to_cols, return_dtype=pl.Struct).alias(structAlias)
             ).unnest(structAlias)
