@@ -37,7 +37,7 @@ If you encounter issues installing polars, you may need to use the long-term sup
 
 ```bash
 pip uninstall polars
-pip install polars-lts-cpu
+pip install polars-lts-cpu==1.19.0 
 ```
 For testing FlowSets, we recommend using a dedicated Conda environment:
 
@@ -101,6 +101,7 @@ fa.plot_flows(figsize=(15, 10), outfile="./small_example/plots/complete_flow.png
 
 <img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/complete_flow.png" width="500px" />
 
+# Feature centric analysis
 ### Visualize only Specific Gene Sets
 
 ```python
@@ -111,10 +112,11 @@ fa.plot_flows(genes=solis_genes, title="Solis et al. 2016 - KO1 dependent genes"
 
 <img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/geneset_flow.png" width="500px" />
 
+# Pattern centric analysis
 ### Pattern Search and Pathway Analysis
 
 ```python
-# Find genes with specific flow patterns and perform pathway analysis
+# Find genes with specific flow patterns and visualize flow + memberships
 relFlow = fa.flow_finder(
     ["?","?"], 
     minLevels=[None,None,"down"], 
@@ -122,11 +124,15 @@ relFlow = fa.flow_finder(
     verbose=False
     )
 
+fa.plot_flows(use_edges=relFlow,title="Restricted FlowSets \n pattern centric analysis",outfile="./plots/pattern_flow")
+
 fa.plot_flow_memberships(
     use_edges=relFlow, 
     color_genes=solis_genes, 
     outfile="./small_example/plots/pattern_memberships.png"
     )
+
+# Perform pathway analysis using GOslim and additional gene sets
 
 pw_file = "small_example/goslim.gmt"
 
@@ -143,7 +149,7 @@ display(pwScores_signif)
 fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfile="./small_example/plots/goslim_pathway_analysis.png")
 
 ```
-
+<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_flow.png" width="250px" />
 <img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_memberships.png" width="250px" />
 <img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/goslim_pathway_analysis.png" width="500px" />
 
