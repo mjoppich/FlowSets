@@ -140,9 +140,9 @@ dmypy.json
 *.pickle
 benchmark_proc/wgcna
 
-
 *.gmt
 *.gmt.zip
+!goslim.gmt
 
 #projects
 endocarditis
