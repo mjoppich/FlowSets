@@ -30,6 +30,7 @@ You can install **FlowSets** using pip:
 pip install flowsets
 ```
 
+---
 
 ## Installation Help
 
@@ -46,7 +47,7 @@ conda create -n FlowSets_env python=3.12
 conda activate FlowSets_env
 pip install flowsets         
 ```
-
+---
 
 ## Quick Start Example
 
