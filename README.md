@@ -30,6 +30,24 @@ You can install **FlowSets** using pip:
 pip install flowsets
 ```
 
+
+## Installation Help
+
+If you encounter issues installing polars, you may need to use the long-term support (LTS) CPU-only build:
+
+```bash
+pip uninstall polars
+pip install polars-lts-cpu
+```
+For testing FlowSets, we recommend using a dedicated Conda environment:
+
+```bash
+conda create -n FlowSets_env python=3.12 
+conda activate FlowSets_env
+pip install flowsets         
+```
+
+
 ## Quick Start Example
 
 ```python
