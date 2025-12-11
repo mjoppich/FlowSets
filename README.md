@@ -56,7 +56,7 @@ from flowsets import *
 
 # Read in data as polars dataframe
 data = pl.read_csv(
-    'small_example/deseq2_results_25deg_all_comparisons_cleaned.csv',
+    './data/deseq2_results_25deg_all_comparisons_cleaned.csv',
     null_values=['NA'],
     schema={
         "baseMean": pl.Float32,
@@ -84,7 +84,7 @@ explDFWide, mfFuzzy = LegacyFuzzifier.fuzzify(
 )
 ```
 
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/fuzzy_concept.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/fuzzy_concept.png" width="500px" />
 
 ```python
 # Create a FlowAnalysis (FlowSets) object for the fuzzified data
@@ -97,10 +97,10 @@ def_series = (
 fa = FlowAnalysis(explDFWide, "gene_id", def_series, mfFuzzy)
 
 # Plot the flow memberships for all genes
-fa.plot_flows(figsize=(15, 10), outfile="./small_example/plots/complete_flow.png")
+fa.plot_flows(figsize=(15, 10),title="Data set overview \n Unrestricted FlowSets",outfile="./plots/complete_flow")
 ```
 
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/complete_flow.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/complete_flow.png" width="500px" />
 
 # Feature centric analysis
 ### Visualize only Specific Gene Sets
@@ -108,10 +108,10 @@ fa.plot_flows(figsize=(15, 10), outfile="./small_example/plots/complete_flow.png
 ```python
 solis_genes = ["YAL005C", "YBR101C", "YDR171W", "YDR214W", "YDR258C", "YFL016C", "YGR142W", "YLL024C", "YLL026W", "YLR216C", "YMR186W", "YNL007C", "YNL064C", "YNL281W", "YOR027W", "YOR298C-A", "YPL240C", "YPR158W"]
 
-fa.plot_flows(genes=solis_genes, title="Solis et al. 2016 - KO1 dependent genes", figsize=(10, 8), outfile="./small_example/plots/geneset_flow.png")
+fa.plot_flows(genes=solis_genes, title="Solis et al. 2016 - KO1 dependent genes", figsize=(10, 8), outfile="./plots/geneset_flow.png")
 ```
 
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/geneset_flow.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/geneset_flow.png" width="500px" />
 
 # Pattern centric analysis
 ### Pattern Search and Pathway Analysis
@@ -130,12 +130,12 @@ fa.plot_flows(use_edges=relFlow,title="Restricted FlowSets \n pattern centric an
 fa.plot_flow_memberships(
     use_edges=relFlow, 
     color_genes=solis_genes, 
-    outfile="./small_example/plots/pattern_memberships.png"
+    outfile="./plots/pattern_memberships.png"
     )
 
 # Perform pathway analysis using GOslim and additional gene sets
 
-pw_file = "small_example/goslim.gmt"
+pw_file = "./data/goslim.gmt"
 
 pwScores = fa.analyse_pathways(
     use_edges=relFlow, 
@@ -147,24 +147,24 @@ pwScores_signif = pwScores.sort_values("pw_coverage_pval", ascending=True).head(
 display(pwScores_signif)
 
 # Show as ORA plot
-fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfile="./small_example/plots/goslim_pathway_analysis.png")
+fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfile="./plots/goslim_pathway_analysis.png")
 
 ```
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_flow.png" width="250px" />
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/pattern_memberships.png" width="250px" />
-<img src="https://github.com/mjoppich/FlowSets/blob/main/small_example/plots/goslim_pathway_analysis.png" width="500px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/pattern_flow.png" width="250px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/pattern_memberships.png" width="250px" />
+<img src="https://github.com/mjoppich/FlowSets/blob/main/tutorial/plots/goslim_pathway_analysis.png" width="500px" />
 
 ---
 
 ## Paper Examples
 
-- [Figure 2: Expression Analysis](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_expression_data.asympt.ipynb)
-- [Figure 3: Double-Differential Analysis](https://github.com/mjoppich/FlowSets/blob/main/examples/sc_ddiff.ipynb)
+- [Figure 2: Expression Analysis](https://github.com/mjoppich/FlowSets/blob/main/paper_examples/sc_expression_data.asympt.ipynb)
+- [Figure 3: Double-Differential Analysis](https://github.com/mjoppich/FlowSets/blob/main/paper_examples/sc_ddiff.ipynb)
 
 ## other Examples
-- [Basic functionalities](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_example.ipynb)
-- [Downstream analyses](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_ORA.ipynb)
-- [Custom import](https://github.com/mjoppich/FlowSets/blob/main/small_example/Flowsets_different_inputs.ipynb)
+- [Basic functionalities](https://github.com/mjoppich/FlowSets/blob/main/tutorial/Flowsets_example.ipynb)
+- [Downstream analyses](https://github.com/mjoppich/FlowSets/blob/main/tutorial/Flowsets_ORA.ipynb)
+- [Custom import](https://github.com/mjoppich/FlowSets/blob/main/tutorial/Flowsets_different_inputs.ipynb)
 
 ---
 
@@ -175,7 +175,7 @@ fa.plotORAresult(pwScores_signif, "GOslim", numResults=10, figsize=(6,6), outfil
 - Relevant flows are defined using a simple grammar with `flow_finder`, specifying desired differences between levels.
 - For each flow or group of flows, gene set enrichment analysis is performed. Gene sets are binned by size, and for each bin, flow memberships are calculated. A z-score is computed for each gene set (relative to others in the bin), which is transformed into a p-value for all positive-z-score (overrepresented) gene sets.
 
-A more detailed description is available in the [working copy of our manuscript article](https://github.com/mjoppich/FlowSets/blob/main/examples/WorkingVersionFlowsets.pdf).
+A more detailed description is available in the [working copy of our manuscript article](https://github.com/mjoppich/FlowSets/blob/main/paper_examples/WorkingVersionFlowsets.pdf).
 
 <!---
 ---
